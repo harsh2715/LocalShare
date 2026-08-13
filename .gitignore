@@ -7,3 +7,4 @@ src-tauri/gen/
 logs/
 artifacts/two-node/
 src-tauri/artifacts/
+scripts/__pycache__/

@@ -1,0 +1,32 @@
+608-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:01.5414548Z    Compiling localshare v0.1.0 (D:\a\LocalShare\LocalShare\src-tauri)
+609-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:03.9432766Z     Checking matchers v0.2.0
+610-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:04.0649203Z     Checking yasna v0.5.2
+611-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:04.6295809Z     Checking nu-ansi-term v0.50.3
+612-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:04.9836983Z     Checking thread_local v1.1.10
+613-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:05.1454930Z     Checking fallible-iterator v0.3.0
+614-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:05.6491152Z     Checking fallible-streaming-iterator v0.1.9
+615-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:05.7834419Z     Checking rusqlite v0.32.1
+616-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:07.0398733Z     Checking tracing-subscriber v0.3.23
+617-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:08.4923324Z     Checking rcgen v0.13.2
+618:Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1367827Z error: failed to run custom build command for `localshare v0.1.0 (D:\a\LocalShare\LocalShare\src-tauri)`
+619-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1377513Z 
+620-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1384741Z Caused by:
+621-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1392415Z   process didn't exit successfully: `D:\a\LocalShare\LocalShare\src-tauri\target\debug\build\localshare-e3314a22ed8e83bd\build-script-build` (exit code: 1)
+622-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1643164Z   --- stdout
+623-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1724622Z   cargo:rerun-if-env-changed=TAURI_CONFIG
+624-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1920111Z   cargo:rustc-check-cfg=cfg(desktop)
+625-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1921701Z   cargo:rustc-cfg=desktop
+626-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1922429Z   cargo:rustc-check-cfg=cfg(mobile)
+627-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1923420Z   cargo:rerun-if-changed=D:\a\LocalShare\LocalShare\src-tauri\tauri.conf.json
+628-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1924561Z   cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_APP_NAME=desktop
+629-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1925617Z   cargo:rustc-env=TAURI_ANDROID_PACKAGE_NAME_PREFIX=com_localshare
+630-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1926633Z   cargo:rustc-check-cfg=cfg(dev)
+631-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1927309Z   cargo:rustc-cfg=dev
+632-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1928651Z   cargo:PERMISSION_FILES_PATH=D:\a\LocalShare\LocalShare\src-tauri\target\debug\build\localshare-a993a817e0d8d496\out\app-manifest\__app__-permission-files
+633-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1930018Z   cargo:rerun-if-changed=capabilities
+634-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1930839Z   cargo:rerun-if-env-changed=REMOVE_UNUSED_COMMANDS
+635-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1931780Z   cargo:rustc-env=TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc
+636-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1932682Z   package.metadata does not exist
+637:Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1933624Z   `icons/icon.ico` not found; required for generating a Windows Resource file during tauri-build
+638-Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:09.1935587Z warning: build failed, waiting for other jobs to finish...
+639:Build LocalShare Windows installer	Check Rust targets	2026-08-13T16:14:29.4402247Z ##[error]Process completed with exit code 1.
