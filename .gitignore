@@ -5,3 +5,5 @@ src-tauri/gen/
 *.tsbuildinfo
 .DS_Store
 logs/
+artifacts/two-node/
+src-tauri/artifacts/
