@@ -52,6 +52,11 @@ jobs:
         working-directory: src-tauri
         run: cargo test --all-targets
 
+      - name: Run Windows two-node transport harness
+        shell: pwsh
+        working-directory: src-tauri
+        run: cargo run --features two-node --bin two_node
+
       - name: Build production Tauri NSIS bundle
         shell: pwsh
         run: .\scripts\build-windows.ps1 -SkipInstall -SkipFrontend -SkipRustChecks
@@ -102,6 +107,35 @@ jobs:
           - SHA-256: `$hash`
           - Production executable: `LocalShare.exe` (x86_64 PE)
           - Runtime/LAN verification: not performed by this hosted runner
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Install and launch Windows application smoke test
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'release\windows\LocalShare-Setup.exe'
+          $installRoot = Join-Path $env:RUNNER_TEMP 'LocalShare-installed'
+          New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
+
+          # NSIS supports /S for silent installation and /D= as the final
+          # argument for a deterministic test-only destination.
+          $setup = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installRoot") -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "NSIS installer exited with code $($setup.ExitCode)" }
+
+          $installed = Get-ChildItem -Path $installRoot -Filter 'localshare.exe' -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $installed) { throw "Installed localshare.exe was not found below $installRoot" }
+
+          $app = Start-Process -FilePath $installed.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($app.HasExited) { throw "Installed LocalShare exited during smoke test with code $($app.ExitCode)" }
+
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          @"
+          ### Windows smoke test
+
+          - Silent NSIS installation: PASS
+          - Installed executable: `$($installed.FullName)`
+          - Installed process launch: PASS
+          - GUI visual inspection: NOT VERIFIED on hosted runner
           "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Upload LocalShare-Setup.exe
