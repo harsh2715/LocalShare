@@ -1,0 +1,20 @@
+LocalShare GitHub Actions Windows runner status
+Date: 2026-08-13
+
+Workflow: .github/workflows/windows-release.yml
+Runner: windows-latest
+Requested artifact: LocalShare-Setup.exe
+
+Status: NOT RUN
+Reason: this checkout has no git remote and no LocalShare GitHub repository is configured. No hosted runner job, installer, artifact URL, or SHA-256 exists yet.
+
+The workflow is configured to:
+- checkout the exact source;
+- use Node 22 from .nvmrc and npm ci;
+- install stable Rust and x86_64-pc-windows-msvc;
+- run npm run build;
+- run cargo check --all-targets and cargo test --all-targets;
+- build the Tauri NSIS bundle;
+- reject two_node.exe, validate PE headers, hash the installer, and upload LocalShare-Setup.exe.
+
+Windows runtime/LAN and physical Mac↔Windows testing are intentionally not performed by the hosted runner.

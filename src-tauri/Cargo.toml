@@ -5,6 +5,19 @@ description = "Direct encrypted LAN file transfer and chat"
 authors = ["LocalShare"]
 edition = "2021"
 
+[features]
+default = []
+two-node = []
+
+[[bin]]
+name = "localshare"
+path = "src/main.rs"
+
+[[bin]]
+name = "two_node"
+path = "src/bin/two_node.rs"
+required-features = ["two-node"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

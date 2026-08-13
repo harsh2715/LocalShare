@@ -1,0 +1,10 @@
+LocalShare mDNS observation — 2026-08-13
+
+Command:
+  dns-sd -B _localshare._tcp local.
+
+Observed:
+  Browsing for _localshare._tcp.local.
+  Add ... local. _localshare._tcp. d99232da-b457-440a-8a09-d15acae4f96d
+
+This proves the packaged Mac advertised a LocalShare service. It does not prove discovery or automatic connection with a second physical computer.

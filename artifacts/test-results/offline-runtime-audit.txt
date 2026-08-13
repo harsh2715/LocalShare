@@ -15,3 +15,7 @@ Other processes on the development Mac had unrelated Internet connections; those
 
 Result: PASS for this limited process-socket/static audit.
 Limitations: not a packet capture, not an Internet-disabled router test, and not a physical two-computer audit.
+
+Follow-up packaged runtime observation:
+- The corrected packaged app (`bundle/macos/LocalShare.app/Contents/MacOS/localshare`) listened on TCP *:32123 and exposed only the expected local mDNS sockets.
+- No public endpoint was observed for the LocalShare process.

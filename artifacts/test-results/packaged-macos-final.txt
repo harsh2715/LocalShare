@@ -1,0 +1,21 @@
+LocalShare packaged macOS verification — 2026-08-13
+
+Build command:
+  scripts/build-macos.sh
+
+Artifacts:
+  src-tauri/target/release/bundle/macos/LocalShare.app
+  src-tauri/target/release/bundle/macos/LocalShare_0.1.0_aarch64.dmg
+
+Package inspection:
+  CFBundleExecutable=localshare
+  Contents/MacOS/localshare is the only executable in the app
+  release/localshare SHA-256 == app Contents/MacOS/localshare SHA-256
+  mounted DMG contains LocalShare.app/Contents/MacOS/localshare
+
+Runtime:
+  packaged native window opened
+  React UI was non-blank
+  visible Nearby devices, Messages, Transfer history, Settings, Diagnostics navigation was exercised
+  Copy diagnostics and Troubleshooting → Connect using IP controls were exercised
+  SQLite opened; TCP *:32123 listened; mDNS sockets opened

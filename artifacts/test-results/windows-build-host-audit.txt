@@ -1,0 +1,19 @@
+LocalShare Windows build-host audit
+Date: 2026-08-13
+
+Host: macOS 26.5.1, MacBookAir10,1, Apple Silicon, 8 CPUs, 8589934592 bytes RAM
+Disk: / has approximately 45 GiB available at audit time
+Virtualization apps at initial audit: UTM, VMware Fusion, Parallels Desktop, VirtualBox not installed
+Follow-up: official Homebrew UTM cask 4.7.5 installed at /Applications/UTM.app; no guest VM created
+VM artifacts: no Windows VM disk or ISO found in inspected user scope
+Windows cross tools: rustup, x86_64-w64-mingw32-gcc, zig, cargo-xwin, cargo-tauri not found
+
+Attempted:
+  cargo build --target x86_64-pc-windows-msvc --release --bin localshare
+
+Observed failure:
+  error[E0463]: can't find crate for `core`
+  the `x86_64-pc-windows-msvc` target may not be installed
+  error[E0463]: can't find crate for `std`
+
+Classification: BLOCKED_BY_ENVIRONMENT. No Windows artifact was generated.

@@ -7,4 +7,4 @@
 5. UI/package: file picker, drag/drop, macOS app, Windows installer.
 6. Offline: packet capture with upstream Internet disabled.
 
-Current automated evidence is limited to frontend production build, Rust check, and two Rust unit tests. Higher levels are `NOT VERIFIED`.
+Current evidence includes the frontend production build, Rust check/tests, real TLS two-node chat/single-file/hash harness (`cargo run --features two-node --bin two_node`), packaged macOS app/DMG inspection, packaged GUI navigation, and a Mac mDNS advertisement observation. Physical Mac↔Windows discovery, multi-file/large-file/cancel/reconnect/resume, and packet capture remain `NOT VERIFIED`.

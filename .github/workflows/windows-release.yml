@@ -1,0 +1,123 @@
+name: LocalShare Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  windows-release:
+    name: Build LocalShare Windows installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+
+      - name: Install project Node.js version
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install stable Rust and x64 MSVC target
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+          rustup target list --installed
+
+      - name: Install frontend dependencies from lockfile
+        shell: pwsh
+        run: npm ci
+
+      - name: Build frontend
+        shell: pwsh
+        run: npm run build
+
+      - name: Check Rust targets
+        shell: pwsh
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: Run Rust tests
+        shell: pwsh
+        working-directory: src-tauri
+        run: cargo test --all-targets
+
+      - name: Build production Tauri NSIS bundle
+        shell: pwsh
+        run: .\scripts\build-windows.ps1 -SkipInstall -SkipFrontend -SkipRustChecks
+
+      - name: Verify installer and calculate SHA-256
+        id: verify
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:GITHUB_WORKSPACE 'release\windows\LocalShare-Setup.exe'
+          $app = Join-Path $env:GITHUB_WORKSPACE 'release\windows\LocalShare.exe'
+          $sums = Join-Path $env:GITHUB_WORKSPACE 'release\windows\SHA256SUMS.txt'
+
+          if (-not (Test-Path $installer)) { throw "Missing final installer: $installer" }
+          if (-not (Test-Path $app)) { throw "Missing production executable: $app" }
+          if (-not (Test-Path $sums)) { throw "Missing checksum file: $sums" }
+
+          function Assert-Pe([string] $path, [bool] $requireX64) {
+            $bytes = [System.IO.File]::ReadAllBytes($path)
+            if ($bytes.Length -lt 0x40 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+              throw "$path is not a PE executable"
+            }
+            $offset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+            if ($offset -lt 0 -or $offset + 6 -gt $bytes.Length -or [System.Text.Encoding]::ASCII.GetString($bytes, $offset, 4) -ne "PE`0`0") {
+              throw "$path has no PE signature"
+            }
+            $machine = [System.BitConverter]::ToUInt16($bytes, $offset + 4)
+            if ($requireX64 -and $machine -ne 0x8664) { throw "$path is not x86_64 PE: 0x$('{0:x4}' -f $machine)" }
+          }
+
+          Assert-Pe $app $true
+          # NSIS setup programs may be 32-bit PE launchers while installing
+          # the x86_64 LocalShare application. The application itself is the
+          # artifact whose machine type must be x86_64.
+          Assert-Pe $installer $false
+          if (Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE 'release\windows') -Filter 'two_node.exe' -File -ErrorAction SilentlyContinue) {
+            throw 'two_node.exe must never be present in the release directory'
+          }
+
+          $hash = (Get-FileHash -Algorithm SHA256 -Path $installer).Hash.ToLowerInvariant()
+          $size = (Get-Item $installer).Length
+          "installer_sha256=$hash" >> $env:GITHUB_OUTPUT
+          "installer_size=$size" >> $env:GITHUB_OUTPUT
+          @"
+          ## LocalShare Windows release
+
+          - Installer: `release/windows/LocalShare-Setup.exe`
+          - Size: $size bytes
+          - SHA-256: `$hash`
+          - Production executable: `LocalShare.exe` (x86_64 PE)
+          - Runtime/LAN verification: not performed by this hosted runner
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload LocalShare-Setup.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalShare-Setup
+          path: release/windows/LocalShare-Setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload checksum and release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: LocalShare-Windows-release-metadata
+          path: |
+            release/windows/SHA256SUMS.txt
+            release/windows/README-WINDOWS.txt
+          if-no-files-found: error
+          retention-days: 14
