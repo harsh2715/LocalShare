@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+out="${1:-artifacts/test-files}"
+mkdir -p "$out"
+python3 - "$out" <<'PY'
+import hashlib, pathlib, sys
+out = pathlib.Path(sys.argv[1])
+files = {"0-byte.bin": b"", "1-byte.bin": b"x", "1kb.bin": bytes(range(256))*4, "unicode-हिंदी-测试.txt": "LocalShare offline LAN ✓\n".encode(), "spaces in filename.txt": b"spaces\n", "multiple.files.with.dots.tar": b"not-an-archive test fixture\n", "noextension": b"fixture\n"}
+for name, data in files.items(): (out/name).write_bytes(data)
+(out/"1mb.bin").write_bytes(hashlib.sha256(b"localshare-1mb").digest() * (1024*1024//32))
+print(f"generated {len(files)+1} deterministic fixtures in {out}")
+PY

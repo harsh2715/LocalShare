@@ -1,0 +1,14 @@
+/Users/harshsinghal/Desktop/Local Network/src-tauri/target/debug/deps/serde-818d0190f9abb43f.d: /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/harshsinghal/Desktop/Local\ Network/src-tauri/target/debug/build/serde-3941f6ad554aa60a/out/private.rs
+
+/Users/harshsinghal/Desktop/Local Network/src-tauri/target/debug/deps/libserde-818d0190f9abb43f.rlib: /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/harshsinghal/Desktop/Local\ Network/src-tauri/target/debug/build/serde-3941f6ad554aa60a/out/private.rs
+
+/Users/harshsinghal/Desktop/Local Network/src-tauri/target/debug/deps/libserde-818d0190f9abb43f.rmeta: /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs /Users/harshsinghal/Desktop/Local\ Network/src-tauri/target/debug/build/serde-3941f6ad554aa60a/out/private.rs
+
+/Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/lib.rs:
+/Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/integer128.rs:
+/Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/mod.rs:
+/Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/de.rs:
+/Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.229/src/private/ser.rs:
+/Users/harshsinghal/Desktop/Local\ Network/src-tauri/target/debug/build/serde-3941f6ad554aa60a/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/harshsinghal/Desktop/Local Network/src-tauri/target/debug/build/serde-3941f6ad554aa60a/out
