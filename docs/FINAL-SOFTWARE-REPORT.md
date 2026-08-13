@@ -4,100 +4,105 @@ Audit date: 2026-08-13.
 
 ## Final status
 
-PARTIAL. The existing project has a working macOS frontend/build path, corrected production-binary packaging, real TLS two-node chat and single-file/hash coverage, source-wired automatic mDNS connection, incoming approval, settings/history/diagnostics, and a prepared Windows x64 GitHub Actions installer pipeline. The primary Windows installer was not generated because this checkout has no GitHub remote/workflow run. No `.exe` was fabricated.
+PARTIAL. The Windows installer milestone is complete on GitHub Actions. The broader product remains partial because physical LAN, GUI visual inspection, trust/pinning, multi-file, large-file, cancel, reconnect, and offline physical tests remain unverified or incomplete.
 
-## Required Windows release status
+## Windows release result
 
 ```text
-WINDOWS VM: NOT REQUIRED — GitHub Actions path configured
-WINDOWS RUNNER: NOT RUN — no GitHub remote is configured for this checkout
-WINDOWS BUILD ENVIRONMENT: Apple Silicon macOS; no Windows VM, no rustup, no Windows target libraries, no MSVC linker, no MinGW/Zig/cargo-xwin
-WINDOWS BUILD: NOT VERIFIED — workflow configured but not executed
-WINDOWS EXE: NOT VERIFIED — hosted workflow pending
-WINDOWS INSTALLER: NOT VERIFIED — hosted workflow pending
-FINAL INSTALLER: NOT CREATED LOCALLY; GitHub artifact is pending workflow execution
-FINAL INSTALLER PATH: /Users/harshsinghal/Desktop/Local Network/release/windows/LocalShare-Setup.exe (does not exist)
-WINDOWS GUI: NOT VERIFIED
-WINDOWS AUTO IP: NOT VERIFIED
-WINDOWS MDNS ADVERTISEMENT: NOT VERIFIED
-WINDOWS MDNS BROWSING: NOT VERIFIED
-MAC ↔ WINDOWS AUTO DISCOVERY: NOT VERIFIED
+WINDOWS RUNNER: PASS
+WINDOWS BUILD: PASS
+LOCALSHARE.EXE: PASS
+LOCALSHARE.EXE PE VALIDATION: PASS — x86_64 PE on runner
+NSIS BUILD: PASS
+LOCALSHARE-SETUP.EXE: PASS
+INSTALLER PE VALIDATION: PASS — genuine PE32 Nullsoft installer
+INSTALLER SHA-256: 26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02
+GITHUB ARTIFACT: PASS
+ARTIFACT NAME: LocalShare-Setup
+WINDOWS INSTALL AUTOMATION: PASS — silent NSIS install completed
+WINDOWS PROCESS LAUNCH: PASS — installed process stayed alive during smoke test
+WINDOWS GUI VISUAL TEST: NOT VERIFIED — hosted runner has no visual inspection
+WINDOWS RUNTIME: PARTIAL — process launch and transport harness passed; physical runtime not verified
 ```
 
-The exact host evidence is in `artifacts/test-results/windows-build-host-audit.txt`, `docs/WINDOWS-BUILD-AUDIT.md`, and `docs/WINDOWS-VM-BUILD-REPORT.md`. The cross-target command failed because `x86_64-pc-windows-msvc` has no installed `core/std` target libraries on this Mac. The GitHub Actions workflow avoids that local limitation, but it has not run because no remote repository is configured.
+Successful workflow run: [31724824519](https://github.com/harsh2715/LocalShare/actions/runs/31724824519)
 
-## What is prepared
+Final artifact download: [LocalShare-Setup](https://github.com/harsh2715/LocalShare/actions/runs/31724824519/artifacts/9191863029)
 
-- `src-tauri/Cargo.toml` explicitly maps production `localshare` to `src-tauri/src/main.rs`; `two_node` is opt-in behind the `two-node` feature.
-- `src-tauri/tauri.conf.json` sets `mainBinaryName: localshare` and Tauri Windows `offlineInstaller` WebView2 mode.
-- `BUILD-WINDOWS.cmd` calls `scripts/build-windows.ps1` using `%~dp0`.
-- `.github/workflows/windows-release.yml` is the preferred build path: it uses a GitHub-hosted Windows runner and uploads `LocalShare-Setup.exe` as the `LocalShare-Setup` Actions artifact.
-- `scripts/build-windows.ps1` runs locked npm install/build, Rust checks/tests, an explicit `x86_64-pc-windows-msvc` Tauri build, PE validation, `two_node.exe` rejection, NSIS normalization, optional MSI copy, and SHA-256 generation.
-- `RUN-LOCALSHARE.cmd` launches a portable `LocalShare.exe` from its own folder.
-- `release/windows/README-WINDOWS.txt` is an honest handoff; it contains no fake executable or checksum.
+The exact installer is also copied locally at `/Users/harshsinghal/Desktop/Local Network/release/windows/LocalShare-Setup.exe`.
 
-## macOS regression evidence
+## First Windows failure and fix
 
-- BUILD: PASS — `npm run build`, `cd src-tauri && cargo check --all-targets`, `cargo test --all-targets`.
-- VIRTUAL TWO-NODE TEST: PASS for the implemented harness slice — `cargo run --features two-node --bin two_node` passed real TLS chat A→B, chat B→A, 1 MiB A→B, and SHA-256 equality. Evidence: `artifacts/test-results/two-node-pass.txt`.
-- MACOS `.app`: PASS from prior actual packaged inspection — `Contents/MacOS/localshare` is the only application executable and matches the release binary; `two_node` is not the packaged executable.
-- MACOS DMG: PASS from prior actual mounted inspection — `src-tauri/target/release/bundle/macos/LocalShare_0.1.0_aarch64.dmg` contains the corrected app.
-- PACKAGED MAC RUNTIME: PASS from prior actual launch — non-blank React UI, SQLite, listener, local diagnostics, and navigation were inspected.
+The first Windows run failed in `Check Rust targets` because Tauri’s build script could not find `src-tauri/icons/icon.ico`:
 
-## Acceptance matrix
+```text
+`icons/icon.ico` not found; required for generating a Windows Resource file during tauri-build
+```
+
+Fix: added the required checked-in ICO resource, generated reproducibly from the existing `src-tauri/icons/icon.png` by `scripts/create-windows-icon.py`. No runtime code or macOS architecture was replaced.
+
+## Windows acceptance matrix
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Checkout | PASS | Hosted run checked out commit `bb3fed350ebaa6fcb6f64e0a5b518a4fc4024475` |
+| Node setup | PASS | Node 22 from `.nvmrc` |
+| Rust/MSVC setup | PASS | Stable Rust and `x86_64-pc-windows-msvc` |
+| npm lockfile install | PASS | `npm ci` |
+| Frontend build | PASS | `npm run build` |
+| Windows Rust check | PASS | `cargo check --all-targets` |
+| Windows Rust tests | PASS | `cargo test --all-targets`, 4 passed per target |
+| Windows two-node harness | PASS | Real TLS chat A→B/B→A, single file A→B, SHA-256 |
+| Tauri production build | PASS | Tauri production binary emitted |
+| `LocalShare.exe` | PASS | Release directory contains `LocalShare.exe`; `two_node.exe` rejected |
+| `LocalShare.exe` PE | PASS | x86_64 PE validation |
+| NSIS build | PASS | Setup executable emitted |
+| Installer PE | PASS | PE signature validated; downloaded artifact is PE32 Nullsoft installer |
+| SHA-256 | PASS | `26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02` |
+| Silent install | PASS | NSIS `/S` smoke test |
+| Installed process launch | PASS | Process stayed alive for smoke interval |
+| Artifact upload | PASS | `LocalShare-Setup` artifact ID `9191863029` |
+| Auto IP Windows | NOT VERIFIED | No physical user LAN |
+| mDNS Windows | NOT VERIFIED | No physical user LAN |
+| Windows firewall | NOT VERIFIED | Hosted runner cannot validate user firewall prompt/policy |
+| Windows GUI visual test | NOT VERIFIED | No interactive visual inspection |
+
+## Existing product matrix
 
 | Area | Status | Evidence or reason |
 | --- | --- | --- |
-| MAC GUI | PASS | Actual packaged GUI opened and navigation was inspected |
-| MAC `.app` | PASS | Only `Contents/MacOS/localshare`; checksum matched release binary |
-| MAC DMG | PASS | Mounted DMG contained the corrected app |
-| WINDOWS RUNNER | NOT VERIFIED | Workflow configured; no GitHub remote/run exists |
-| WINDOWS EXE | NOT VERIFIED | GitHub runner workflow pending |
-| WINDOWS INSTALLER | NOT VERIFIED | GitHub runner workflow pending |
-| WINDOWS INSTALL TEST | NOT VERIFIED | No Windows runtime |
-| WINDOWS FIREWALL | NOT VERIFIED | Requires Windows runtime |
-| Automatic IP — Mac | PASS | Packaged diagnostics preferred the active private IPv4 observed on this Mac |
-| Automatic IP — Windows | NOT VERIFIED | No Windows runtime |
-| mDNS — Mac | PARTIAL | Local `_localshare._tcp.local.` advertisement observed; second-device discovery not verified |
-| mDNS — Windows | NOT VERIFIED | No Windows runtime |
-| Automatic peer discovery/connection | PARTIAL | Production source path exists with deterministic UUID-side connection selection; no physical two-device run |
-| Manual IP required | NO for normal workflow | Retained only as troubleshooting fallback |
-| Trust/pinning | PARTIAL | TLS encryption exists, but certificate pinning, persisted cryptographic identity, and trust prompts are incomplete |
-| Messages page | PASS source/UI | Packaged navigation and SQLite command path inspected; cross-device runtime not fully verified |
-| Transfer history | PASS source/UI | SQLite-backed page and clear action wired; population not fully E2E verified |
-| Settings | PASS source/UI | Persistent settings command/page wired; Windows restart persistence not verified |
-| Diagnostics | PASS source/UI | Status fields and redacted Copy diagnostics wired; Windows values not verified |
-| Chat A→B | PASS | Real TLS two-node harness |
-| Chat B→A | PASS | Real TLS two-node harness |
-| Single file A→B | PASS | Real TLS two-node harness, SHA-256 equality |
-| Single file B→A | NOT VERIFIED | Harness does not cover reverse file direction |
-| Multiple files | NOT VERIFIED | Source/UI path exists; no E2E batch run |
-| Large file | NOT VERIFIED | No 100 MB run |
-| SHA-256 | PASS | Harness 1 MiB transfer; receive verifies before rename |
-| Chat during transfer | NOT VERIFIED | Separate control/data queues exist; acceptance run pending |
-| Cancel | PARTIAL | Sender/receiver command/protocol/UI wiring exists; E2E run pending |
-| Reconnect | PARTIAL | Stale mDNS removal/rediscovery source path exists; E2E run pending |
+| macOS build | PASS | `npm run build`, Rust checks/tests |
+| macOS `.app` / DMG | PASS | Correct `Contents/MacOS/localshare`; prior mounted DMG inspection |
+| Automatic peer discovery/connection | PARTIAL | Source path and deterministic selection exist; physical peer not tested |
+| Manual IP required | NO for normal workflow | Troubleshooting fallback only |
+| Trust/pinning | PARTIAL | TLS exists; persisted cryptographic identity, pinning, and trust prompts incomplete |
+| Messages | PASS source/UI; cross-device E2E NOT VERIFIED | Packaged navigation and SQLite command path inspected |
+| Transfer history | PASS source/UI; E2E population NOT VERIFIED | SQLite-backed page wired |
+| Settings | PASS source/UI; Windows restart NOT VERIFIED | Persistent settings wired |
+| Diagnostics | PASS source/UI; Windows values NOT VERIFIED | Redacted Copy diagnostics wired |
+| Single file | PASS in Windows/macOS two-node harness A→B | SHA-256 verified; reverse direction not covered |
+| Multiple files | NOT VERIFIED | No E2E batch run |
+| 100 MB file | NOT VERIFIED | No 100 MB run |
+| Chat during transfer | NOT VERIFIED | Control/data queues exist; acceptance run pending |
+| Cancel | PARTIAL | Source/UI wiring exists; E2E run pending |
+| Reconnect | PARTIAL | Source rediscovery path exists; E2E run pending |
 | Resume | NOT IMPLEMENTED | Not faked |
-| Path traversal | PASS | Rust unit tests cover traversal, absolute, and Windows path forms |
-| Offline static audit | PASS | No configured public runtime endpoint; evidence in `artifacts/test-results/offline-static-audit.txt` |
-| Offline runtime audit | PARTIAL | Limited LocalShare-owned socket audit exists; WAN-off packet capture not performed |
-| Physical two-computer | NOT VERIFIED | No second physical Windows computer/Windows VM |
+| Path traversal | PASS | Rust unit tests cover Unix/Windows/absolute forms |
+| Offline static audit | PASS | No configured public runtime endpoint |
+| Offline physical LAN | NOT VERIFIED | Requires real Mac↔Windows LAN with Internet/WAN unavailable |
+| Physical Mac↔Windows | NOT VERIFIED | Requires user’s physical second computer |
 
-## Exact GitHub Actions handoff
+## Runtime/offline boundary
 
-Push this existing project to its intended GitHub repository, then run the `LocalShare Windows release` workflow from the Actions tab. The workflow uploads:
+The installer uses Tauri’s offline WebView2 installer mode. The hosted runner built and silently installed it, but a user-machine Internet-off installation has not been tested. LocalShare’s intended runtime transport remains direct TCP/TLS plus `_localshare._tcp.local` mDNS; the hosted runner did not perform physical LAN or Internet-off claims.
 
-```bat
-LocalShare-Setup
-```
-
-The artifact contains the genuine NSIS installer generated by the Windows runner. The workflow summary and `SHA256SUMS.txt` provide the exact size and SHA-256. After downloading it, Windows runtime and Mac↔Windows physical LAN testing remain separate and are not claimed by Actions.
+## Commands/evidence
 
 ```text
-WINDOWS RUNTIME: NOT VERIFIED unless executed on Windows
-MAC↔WINDOWS PHYSICAL LAN: NOT VERIFIED
+npm run build
+cd src-tauri && cargo check --all-targets
+cd src-tauri && cargo test --all-targets
+cd src-tauri && cargo run --features two-node --bin two_node
 ```
 
-The exact artifact download location will be the `LocalShare-Setup` artifact on that workflow run’s GitHub Actions page. The exact URL cannot be reported yet because this checkout has no GitHub remote and no workflow run exists.
-
-Only after that installer is executed and the installed GUI is tested in Windows can the Windows runtime statuses move from unverified to PASS or FAIL.
+Hosted evidence is in `artifacts/test-results/windows-rust-failure.txt` and `artifacts/test-results/windows-runner.txt`. The workflow is `.github/workflows/windows-release.yml`.

@@ -8,3 +8,4 @@ logs/
 artifacts/two-node/
 src-tauri/artifacts/
 scripts/__pycache__/
+release/windows/LocalShare-Setup.exe

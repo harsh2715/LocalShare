@@ -1,26 +1,20 @@
-LocalShare Windows release handoff
-==================================
+LocalShare Windows release
+==========================
 
-This directory does not contain a Windows executable yet. The current host is
-an Apple Silicon Mac without a Windows VM or Windows build toolchain, so no
-fake .exe has been created.
+Primary installer: LocalShare-Setup.exe
 
-The preferred build path is `.github/workflows/windows-release.yml` on a
-GitHub-hosted `windows-latest` runner. Push this existing project to its
-intended GitHub repository and run the `LocalShare Windows release` workflow.
-The workflow runs the frontend build, Rust checks/tests, an explicit
-x86_64-pc-windows-msvc Tauri NSIS bundle, PE validation,
-production-binary validation, artifact copying, and SHA-256 generation. It
-writes/uploads the genuine primary installer as:
+This installer was built by Tauri/NSIS on GitHub Actions Windows runner run
+31724824519. The downloaded artifact is a genuine PE32 Nullsoft Installer
+self-extracting archive.
 
-    release\windows\LocalShare-Setup.exe
+SHA-256:
+26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02  LocalShare-Setup.exe
 
-It also writes LocalShare.exe, RUN-LOCALSHARE.cmd, README-WINDOWS.txt, and
-SHA256SUMS.txt when those artifacts are actually built. The normal end user
-needs only LocalShare-Setup.exe; Node.js, npm, Rust, Cargo, Git, and the
-source tree are not required after installation.
+The installer uses Tauri's offline WebView2 installer mode. LocalShare's
+normal runtime communication is LAN-only and uses the _localshare._tcp.local.
+mDNS service. Physical LAN, firewall, GUI visual, and Internet-off tests are
+not claimed by the hosted runner.
 
-The configured installer uses Tauri's offline WebView2 installer mode. The
-resulting installer is expected to be large because it carries the WebView2
-runtime. GitHub Actions builds it but does not perform Windows GUI, LAN, or
-physical Mac↔Windows testing.
+On first launch, allow LocalShare through Windows Defender Firewall on Private
+networks if Windows presents a firewall prompt. Do not enable Public network
+access unless your network policy requires it.

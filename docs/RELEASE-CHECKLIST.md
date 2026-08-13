@@ -13,7 +13,8 @@
 - [ ] Offline packet capture
 - [x] Packaged macOS runtime backend startup
 - [x] Native packaging fixed with `scripts/build-macos.sh` (Homebrew LLVM/Rust target bin PATH)
-- [ ] Windows VM/build host available — BLOCKED_BY_ENVIRONMENT; see `docs/WINDOWS-VM-BUILD-REPORT.md`
-- [ ] Packaged Windows runtime — BLOCKED_BY_ENVIRONMENT
-- [ ] Windows installer install/launch — BLOCKED_BY_ENVIRONMENT
+- [x] GitHub-hosted Windows build — run `31724824519`
+- [x] Packaged Windows runtime process smoke test
+- [x] Windows NSIS installer silent install/launch smoke test
+- [ ] Windows GUI visual inspection
 - [ ] Resume and cancellation

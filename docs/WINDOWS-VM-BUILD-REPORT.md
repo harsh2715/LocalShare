@@ -59,7 +59,7 @@ The script performs the locked frontend install, frontend build, Rust checks/tes
 
 ```text
 WINDOWS VM: NOT REQUIRED
-WINDOWS RUNNER: NOT VERIFIED — no GitHub remote/run configured
+WINDOWS RUNNER: PASS — GitHub Actions run 31724824519
 VM NETWORK: NOT APPLICABLE TO HOSTED BUILD
-WINDOWS BUILD: NOT VERIFIED — hosted workflow configured but not run
+WINDOWS BUILD: PASS — hosted workflow completed
 ```

@@ -5,8 +5,13 @@ Workflow: .github/workflows/windows-release.yml
 Runner: windows-latest
 Requested artifact: LocalShare-Setup.exe
 
-Status: NOT RUN
-Reason: this checkout has no git remote and no LocalShare GitHub repository is configured. No hosted runner job, installer, artifact URL, or SHA-256 exists yet.
+Status: PASS
+Run: https://github.com/harsh2715/LocalShare/actions/runs/31724824519
+Commit: bb3fed350ebaa6fcb6f64e0a5b518a4fc4024475
+Artifact: https://github.com/harsh2715/LocalShare/actions/runs/31724824519/artifacts/9191863029
+Installer SHA-256: 26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02
+Installer downloaded locally from the artifact and identified as a genuine
+PE32 Nullsoft Installer self-extracting archive.
 
 The workflow is configured to:
 - checkout the exact source;
@@ -15,6 +20,10 @@ The workflow is configured to:
 - run npm run build;
 - run cargo check --all-targets and cargo test --all-targets;
 - build the Tauri NSIS bundle;
+- run the Windows two-node transport harness (chat both directions, single
+  file, SHA-256);
 - reject two_node.exe, validate PE headers, hash the installer, and upload LocalShare-Setup.exe.
+- silently install the NSIS package into the runner temp directory and launch
+  the installed application process successfully.
 
 Windows runtime/LAN and physical Mac↔Windows testing are intentionally not performed by the hosted runner.

@@ -14,4 +14,4 @@ Date: 2026-08-13
 - Cancellation: source/UI wiring covers sender and receiver cancellation, but end-to-end transfer test is NOT VERIFIED
 - Reconnect/resume: NOT VERIFIED / resume NOT IMPLEMENTED
 - Packaged executable startup: PASS — stays alive, opens SQLite, binds TCP 32123, opens mDNS sockets; packaged GUI navigation was also inspected
-- Windows build-host audit: BLOCKED_BY_ENVIRONMENT — no Windows VM/toolchain; cross-target `x86_64-pc-windows-msvc` probe failed because the target `core/std` libraries are absent. No Windows artifact was generated.
+- Windows hosted release: PASS — run `31724824519` passed Windows Rust check/tests, the Windows two-node TLS/chat/single-file/SHA-256 harness, Tauri NSIS build, PE/hash validation, silent install, installed-process launch, and artifact upload. GUI visual and physical LAN tests remain unverified.

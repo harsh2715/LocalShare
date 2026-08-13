@@ -42,13 +42,13 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - `npm run tauri build` with normal environment: FAIL because Homebrew Rust’s `rust-objcopy` symlink targets a missing LLVM path.
 - `scripts/build-macos.sh`: PASS — it supplies the Homebrew LLVM/Rust target PATH, builds the app, removes the test-only executable from the app payload, and creates a plain hdiutil DMG suitable for headless/offline sessions.
 - Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, and React pages verified.
-- Windows: not built locally; the hosted Windows workflow is configured but has not run because this checkout has no GitHub remote.
+- Windows: hosted Windows workflow PASS on run `31724824519`; installer and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
 - Physical LAN / mDNS / packet capture: not verified.
 
 ## Windows readiness conclusion
 
 - Production binary selection is explicit: `src-tauri/Cargo.toml` maps `localshare` to `src-tauri/src/main.rs`; `two_node` requires the opt-in `two-node` feature; `src-tauri/tauri.conf.json` sets `mainBinaryName: localshare`.
 - `scripts/build-windows.ps1` is prepared to build NSIS/MSI, validate genuine PE output, reject `two_node.exe`, normalize the primary installer to `release/windows/LocalShare-Setup.exe`, and emit checksums.
-- The Windows config uses Tauri `offlineInstaller` WebView2 mode; actual installer size, installation, and offline behavior are not verified.
+- The Windows config uses Tauri `offlineInstaller` WebView2 mode; hosted build, silent install, and process launch passed. User-machine Internet-off installation remains unverified.
 - `dirs::data_local_dir()` and Windows `explorer` handling are present, and the LAN interface filter excludes common virtual adapters. Windows firewall, mDNS, DPAPI/credential storage, installed GUI, and Mac↔Windows transport remain unverified.
-- Current status: `WINDOWS BUILD: NOT VERIFIED`; `WINDOWS EXE: NOT VERIFIED`; `WINDOWS INSTALLER: NOT VERIFIED`. The GitHub Actions workflow is the intended build environment.
+- Current status: `WINDOWS BUILD: PASS`; `WINDOWS EXE: PASS`; `WINDOWS INSTALLER: PASS` on GitHub Actions run `31724824519`. Windows GUI visual, physical LAN, and firewall behavior remain unverified.
