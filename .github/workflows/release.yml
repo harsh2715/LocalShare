@@ -1,0 +1,99 @@
+name: LocalShare signed release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install Rust/MSVC
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add x86_64-pc-windows-msvc
+      - name: Install and test
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+          cargo check --all-targets --manifest-path src-tauri/Cargo.toml
+          cargo test --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Build signed Windows bundles
+        shell: pwsh
+        run: .\scripts\build-windows.ps1 -SkipInstall -SkipFrontend -SkipRustChecks
+      - name: Collect Windows release assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          Copy-Item release\windows\LocalShare-Setup.exe release-assets\
+          Copy-Item release\windows\SHA256SUMS.txt release-assets\
+          Get-ChildItem src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis -File |
+            Where-Object { $_.Name -match '\.(nsis\.zip|sig)$' } |
+            Copy-Item -Destination release-assets\
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-windows-assets
+          path: release-assets
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install packaging tools
+        run: brew install llvm
+      - name: Install and test
+        run: |
+          npm ci
+          npm run build
+          cargo check --all-targets --manifest-path src-tauri/Cargo.toml
+          cargo test --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Build signed macOS bundles
+        run: ./scripts/build-macos.sh
+      - name: Collect macOS release assets
+        run: |
+          mkdir -p release-assets
+          cp src-tauri/target/release/bundle/macos/*.dmg release-assets/
+          cp src-tauri/target/release/bundle/macos/*.app.tar.gz release-assets/
+          cp src-tauri/target/release/bundle/macos/*.sig release-assets/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-macos-assets
+          path: release-assets
+
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-*-assets
+          merge-multiple: true
+          path: release-assets
+      - name: Create updater manifest
+        shell: bash
+        run: python3 scripts/create-update-manifest.py --version "${GITHUB_REF_NAME#v}" --assets release-assets --output release-assets/latest.json
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release-assets/* --repo "$GITHUB_REPOSITORY" --title "LocalShare $GITHUB_REF_NAME" --generate-notes

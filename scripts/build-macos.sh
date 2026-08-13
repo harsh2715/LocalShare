@@ -5,6 +5,13 @@ RUST_TARGET_BIN="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | awk '/host:/
 export PATH="$LLVM_BIN:$RUST_TARGET_BIN:$PATH"
 command -v rust-objcopy >/dev/null
 
+# Updater artifacts are signed only when the ignored local key or a CI secret
+# is available. The private key is never committed or printed.
+if [[ -f ".localshare-private/updater.key" ]]; then
+  export TAURI_SIGNING_PRIVATE_KEY="$(<.localshare-private/updater.key)"
+  export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
+fi
+
 # Tauri/Cargo can leave binaries from an earlier multi-target build in the
 # generated app directory. Remove only this generated bundle, never sources.
 BUNDLE_DIR="src-tauri/target/release/bundle/macos"

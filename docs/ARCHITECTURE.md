@@ -11,4 +11,13 @@ React UI → Tauri commands/events → Rust state
                                   └─ SQLite local state
 ```
 
-The current session implementation uses one TLS connection per peer and a bounded sender channel. Incoming file data is streamed to disk. The port is 32123; the code currently does not yet implement automatic fallback to a different port when occupied.
+The current session implementation uses one TLS connection per peer and
+separate bounded control/data channels so chat and heartbeat frames are not
+queued behind file chunks. Incoming file data is streamed to a temporary file,
+validated with SHA-256, and atomically renamed into the configured receive
+directory. File and folder manifests carry safe normalized relative paths.
+
+The port is 32123 with a fallback probe when occupied. First-seen fingerprints
+require explicit trust; trusted fingerprints are stored in SQLite. The updater
+is a separate optional Internet-only Tauri plugin pointed at the LocalShare
+GitHub Release metadata and signed with a private CI key.

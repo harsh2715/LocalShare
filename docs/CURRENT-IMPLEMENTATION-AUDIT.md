@@ -24,10 +24,10 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 
 ## Partial or not implemented
 
-- Trust is not authenticated: the custom TLS verifier accepts any certificate, and no keychain/DPAPI-backed key or pinning flow exists.
+- Trust is partially authenticated at the application identity layer: first-seen fingerprints require approval, trusted fingerprints persist in SQLite, and changed fingerprints are rejected. The underlying self-signed certificate key is still process-generated rather than persisted in native secure storage.
 - Reconnect state machine is still incomplete; stale mDNS peers are removed and known peers can be rediscovered, but bounded reconnect behavior is not physically tested.
 - Resume is not implemented.
-- Trust/pinning, notifications, and resume remain incomplete. The Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, and incoming approval UI paths are now source-wired and packaged-navigation verified.
+- Native notifications, certificate-key persistence, and resume remain incomplete. Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, folder transfer, updater check, trust prompt, and incoming approval UI paths are source-wired and packaged-navigation verified where noted.
 - Port fallback is now probed in `main`, but mDNS/manual-connect behavior under an occupied port is not yet tested.
 
 ## Actual test evidence
@@ -43,7 +43,7 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - `scripts/build-macos.sh`: PASS — it supplies the Homebrew LLVM/Rust target PATH, builds the app, removes the test-only executable from the app payload, and creates a plain hdiutil DMG suitable for headless/offline sessions.
 - Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, and React pages verified.
 - Windows: hosted Windows workflow PASS on run `31724824519`; installer and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
-- Physical LAN / mDNS / packet capture: not verified.
+- Physical LAN / mDNS / packet capture: not verified; the optional updater is an explicit GitHub HTTPS exception when Internet is available.
 
 ## Windows readiness conclusion
 

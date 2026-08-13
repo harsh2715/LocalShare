@@ -9,3 +9,8 @@ artifacts/two-node/
 src-tauri/artifacts/
 scripts/__pycache__/
 release/windows/LocalShare-Setup.exe
+.localshare-private/
+.localshare-test-work/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

@@ -4,7 +4,7 @@ LocalShare is a native desktop LAN sharing app for direct file transfer and chat
 
 ## Current status
 
-The existing V1 implementation builds as a native macOS app, advertises/browses the LAN with mDNS, automatically attempts the deterministic secure peer connection, and exposes clickable Messages, Transfer History, Settings, Diagnostics, incoming approval, picker, and native drag/drop paths. Full acceptance is not claimed yet: trust prompting/pinning, resumable transfers, transfer cancellation, large/multi-file runtime verification, Windows build verification, and physical two-computer verification remain incomplete or unverified.
+The existing V1 implementation builds as a native macOS app, advertises/browses the LAN with mDNS, uses explicit first-contact fingerprint trust, and exposes clickable Messages, Transfer History, Settings, Diagnostics, incoming approval, file/folder pickers, and native drag/drop paths. Full acceptance is not claimed yet: resumable transfers, transfer cancellation, large/multi-file runtime verification, real updater installation, and physical two-computer verification remain incomplete or unverified.
 
 ## Architecture
 
@@ -13,7 +13,8 @@ The existing V1 implementation builds as a native macOS app, advertises/browses 
 - mDNS/DNS-SD service `_localshare._tcp.local.` for nearby peer discovery.
 - Direct TLS 1.3 session over the LAN, with separate bounded message channels for control and transfers.
 - Local SQLite state under the platform application-data directory.
-- Files are written to `Downloads/LocalShare` through a `.localshare-part` file and renamed after SHA-256 verification.
+- Files are written to the platform Downloads directory under `LocalShare` (macOS: `~/Downloads/LocalShare`; Windows: `%USERPROFILE%\\Downloads\\LocalShare`) through a `.localshare-part` file and renamed after SHA-256 verification. The destination is configurable in Settings.
+- File and folder manifests use normalized relative paths; symlinks and traversal are rejected. Existing names are collision-safe (`name (1).ext`).
 
 ## Development
 
@@ -24,6 +25,19 @@ cd src-tauri && cargo test && cargo check
 ```
 
 For a development window, install the Tauri CLI and run `npm run tauri dev`. Packaging requires the native macOS/Windows build prerequisites for the target platform.
+
+## Storage and updates
+
+Backend state is stored under the platform application-data directory in
+`LocalShare/localshare.sqlite` plus the persistent `device-id`. Received files
+are separate user data in `Downloads/LocalShare` by default. See
+`docs/BACKEND-STORAGE.md` for the exact platform paths and persistence rules.
+
+Software updates are optional and Internet-only. The updater checks the
+authorized GitHub Releases metadata, verifies Tauri-signed artifacts, and
+relaunches after installation. If the Internet is unavailable, the check is
+skipped/fails gracefully and direct LAN discovery, chat, file, and folder
+transfers remain local and usable.
 
 ## Offline use
 
@@ -39,7 +53,11 @@ The Windows installer is configured for Tauri’s offline WebView2 installer mod
 
 ## Security note
 
-TLS encrypts the session, but the current development build uses a custom verifier that does not yet pin a persisted Ed25519 identity key or show a user confirmation dialog. See [docs/SECURITY.md](/Users/harshsinghal/Desktop/Local%20Network/docs/SECURITY.md) before treating this as production secure.
+TLS encrypts the session. First-seen peers require explicit trust, trusted
+fingerprints are persisted in SQLite, and a changed fingerprint is rejected.
+The certificate key itself remains process-generated in this V1; see
+[docs/SECURITY.md](/Users/harshsinghal/Desktop/Local%20Network/docs/SECURITY.md)
+for the exact boundary.
 
 ## Documentation
 

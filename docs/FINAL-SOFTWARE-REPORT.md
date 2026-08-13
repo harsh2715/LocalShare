@@ -1,10 +1,31 @@
 # LocalShare Final Software Report
 
-Audit date: 2026-08-13.
+Audit date: 2026-08-14.
 
 ## Final status
 
-PARTIAL. The Windows installer milestone is complete on GitHub Actions. The broader product remains partial because physical LAN, GUI visual inspection, trust/pinning, multi-file, large-file, cancel, reconnect, and offline physical tests remain unverified or incomplete.
+PARTIAL. The core storage, folder-manifest, trust, updater, and UI paths were
+hardened in this iteration. Physical LAN, GUI visual inspection, large-file,
+cancel/reconnect, real updater installation, and Internet-off tests remain
+unverified. Resume remains not implemented.
+
+## This iteration
+
+- Default receive destination is `~/Downloads/LocalShare` on macOS and
+  `%USERPROFILE%\\Downloads\\LocalShare` on Windows.
+- Settings now expose Change folder and Open folder; history exposes Open file
+  and Show in folder.
+- Folder transfer recursively preserves structure, rejects symlinks and
+  traversal, and uses collision-safe naming.
+- Tauri updater plugin is configured for the authorized GitHub Releases
+  endpoint; artifacts are signed in CI using the `TAURI_SIGNING_PRIVATE_KEY`
+  secret. No updater private key is committed.
+- New peers require explicit trust; persisted fingerprints are checked and
+  changed identities are rejected.
+- The corresponding packaged macOS build was rebuilt after these changes:
+  `src-tauri/target/release/bundle/macos/LocalShare.app`; the app executable
+  is `Contents/MacOS/localshare`, and the signed updater bundle plus `.sig`
+  were generated locally.
 
 ## Windows release result
 
@@ -75,7 +96,7 @@ Fix: added the required checked-in ICO resource, generated reproducibly from the
 | macOS `.app` / DMG | PASS | Correct `Contents/MacOS/localshare`; prior mounted DMG inspection |
 | Automatic peer discovery/connection | PARTIAL | Source path and deterministic selection exist; physical peer not tested |
 | Manual IP required | NO for normal workflow | Troubleshooting fallback only |
-| Trust/pinning | PARTIAL | TLS exists; persisted cryptographic identity, pinning, and trust prompts incomplete |
+| Trust/pinning | PARTIAL | Explicit first-contact fingerprint trust and persisted changed-identity rejection are implemented; certificate public-key persistence remains incomplete |
 | Messages | PASS source/UI; cross-device E2E NOT VERIFIED | Packaged navigation and SQLite command path inspected |
 | Transfer history | PASS source/UI; E2E population NOT VERIFIED | SQLite-backed page wired |
 | Settings | PASS source/UI; Windows restart NOT VERIFIED | Persistent settings wired |

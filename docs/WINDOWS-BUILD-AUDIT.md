@@ -18,7 +18,7 @@ Audit date: 2026-08-13. This is an evidence-based source and hosted-runner audit
 - `open_location` in `src-tauri/src/main.rs` uses `explorer` under `target_os = "windows"` and `open` under macOS.
 - `private_addresses` in `src-tauri/src/main.rs` prefers Wi-Fi/Ethernet-style interfaces, private IPv4 addresses, and usable IPv6, while excluding common Docker, WSL, Hyper-V, VMware, VirtualBox, VPN, virtual, and loopback names.
 - mDNS is implemented by `mdns-sd` in `start_mdns`; the advertised service is `_localshare._tcp.local.`. Windows firewall/multicast behavior still requires a real Windows runtime test.
-- There is no macOS Keychain API in the Windows path. The current identity file is a persistent UUID, not a private key. Cryptographic key persistence and certificate pinning remain incomplete; see `docs/SECURITY.md`.
+- There is no macOS Keychain API in the Windows path. The current identity file is a persistent UUID, not a private key. Fingerprint trust/pinning and changed-identity rejection are implemented in SQLite; native certificate-key persistence remains incomplete; see `docs/SECURITY.md`.
 - File picker, drag/drop, transfer approval, chat, history, settings, diagnostics, and manual-IP troubleshooting fallback are wired in `src/main.tsx` and the Tauri commands in `src-tauri/src/main.rs`. Their Windows GUI behavior is not verified without Windows.
 
 ## Windows installer strategy

@@ -16,6 +16,13 @@ $ReleaseRoot = Join-Path $ProjectRoot 'release\windows'
 
 Set-Location $ProjectRoot
 
+if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+    $localSigningKey = Join-Path $ProjectRoot '.localshare-private\updater.key'
+    if (Test-Path $localSigningKey) {
+        $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw -Path $localSigningKey
+    }
+}
+
 function Require-Command([string] $Name, [string] $InstallHint) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw "$Name is required. $InstallHint"
