@@ -1,0 +1,5 @@
+request send
+request sent
+request received
+accept sent
+PASS chat A→B; PASS chat B→A; PASS single file A→B; PASS SHA-256; source=../artifacts/two-node/a/1mb.bin destination=../artifacts/two-node/b/1mb.bin

@@ -1,0 +1,20 @@
+   Compiling localshare v0.1.0 (/Users/harshsinghal/Desktop/Local Network/src-tauri)
+warning: unused import: `io::ErrorKind`
+ --> src/bin/two_node.rs:6:15
+  |
+6 | use std::{fs, io::ErrorKind, path::{Path, PathBuf}, time::{Duration, Instant}};
+  |               ^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `localshare` (bin "two_node") generated 1 warning (run `cargo fix --bin "two_node" -p localshare` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.08s
+     Running `target/debug/two_node`
+connected
+frame len=129
+frame len=129
+hello exchange
+chat A write
+chat A read
+frame len=93
+frame len=93

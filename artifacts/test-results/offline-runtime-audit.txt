@@ -1,0 +1,17 @@
+LocalShare offline runtime audit — 2026-08-13
+
+Method:
+- Started the packaged executable at src-tauri/target/release/localshare.
+- Observed its process sockets with lsof -nP -a -p <pid> -i.
+- Searched production source/configuration with rg for http(s), ws(s), stun:, and turn:.
+
+Observed LocalShare sockets:
+- TCP *:32123 LISTEN
+- UDP 127.0.0.1:<ephemeral> (mDNS daemon control)
+- UDP *:5353 (mDNS multicast sockets)
+
+No LocalShare public TCP/HTTPS/WebSocket/STUN/TURN endpoint was observed.
+Other processes on the development Mac had unrelated Internet connections; those were not attributed to LocalShare.
+
+Result: PASS for this limited process-socket/static audit.
+Limitations: not a packet capture, not an Internet-disabled router test, and not a physical two-computer audit.

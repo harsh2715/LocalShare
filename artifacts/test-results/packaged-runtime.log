@@ -1,0 +1,37 @@
+
+thread 'main' (4245413) panicked at /Users/harshsinghal/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustls-0.23.43/src/crypto/mod.rs:249:14:
+
+Could not automatically determine the process-level CryptoProvider from Rustls crate features.
+Call CryptoProvider::install_default() before this point to select a provider manually, or make sure exactly one of the 'aws-lc-rs' and 'ring' features is enabled.
+See the documentation of the CryptoProvider type for more information.
+            
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'main' (4245413) panicked at /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/panicking.rs:225:5:
+panic in a function that cannot unwind
+stack backtrace:
+   0:        0x102f2fc28 - <<std[baab03b253eddc1]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[7ef55acc681f1df7]::fmt::Display>::fmt
+   1:        0x102f454e8 - core[7ef55acc681f1df7]::fmt::write
+   2:        0x102f34880 - <std[baab03b253eddc1]::sys::stdio::unix::Stderr as std[baab03b253eddc1]::io::Write>::write_fmt
+   3:        0x102f15d14 - std[baab03b253eddc1]::panicking::default_hook::{closure#0}
+   4:        0x102f28fa4 - std[baab03b253eddc1]::panicking::default_hook
+   5:        0x102f292cc - std[baab03b253eddc1]::panicking::panic_with_hook
+   6:        0x102f15dd4 - std[baab03b253eddc1]::panicking::panic_handler::{closure#0}
+   7:        0x102f0b0c8 - std[baab03b253eddc1]::sys::backtrace::__rust_end_short_backtrace::<std[baab03b253eddc1]::panicking::panic_handler::{closure#0}, !>
+   8:        0x102f167a8 - __rustc[536fa4e5e1db02e2]::rust_begin_unwind
+   9:        0x102f7f074 - core[7ef55acc681f1df7]::panicking::panic_nounwind_fmt
+  10:        0x102f7effc - core[7ef55acc681f1df7]::panicking::panic_nounwind
+  11:        0x102f7f150 - core[7ef55acc681f1df7]::panicking::panic_cannot_unwind
+  12:        0x102c44884 - tao[b89d8aa90f879b12]::platform_impl::platform::app_delegate::did_finish_launching
+  13:        0x187a3f9bc - <unknown>
+  14:        0x187acc08c - <unknown>
+  15:        0x187acbfd0 - <unknown>
+  16:        0x187a0e3d0 - <unknown>
+  17:        0x1892434a4 - <unknown>
+  18:        0x18be805e8 - <unknown>
+  19:        0x18be80380 - <unknown>
+  20:        0x18be7e9c4 - <unknown>
+  21:        0x18be7e5d8 - <unknown>
+  22:        0x18926bfbc - <unknown>
+  23:        0x18926bdb4 - <unknown>
+thread caused non-unwinding panic. aborting.

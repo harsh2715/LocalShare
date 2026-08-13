@@ -8,10 +8,10 @@
 - [x] Bounded file I/O source path
 - [x] Atomic partial-file rename and hash check source path
 - [ ] Trust/pinning complete
-- [ ] Virtual two-node test
+- [x] Virtual two-node TLS chat/single-file/hash slice
 - [ ] Physical LAN test
 - [ ] Offline packet capture
-- [ ] Packaged macOS runtime
-- [ ] Native packaging currently blocked by missing `rust-objcopy` in the build environment
+- [x] Packaged macOS runtime backend startup
+- [x] Native packaging fixed with `scripts/build-macos.sh` (Homebrew LLVM/Rust target bin PATH)
 - [ ] Packaged Windows runtime
 - [ ] Resume and cancellation

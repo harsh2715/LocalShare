@@ -1,0 +1,4 @@
+connected
+hello exchange
+chat A write
+chat A read

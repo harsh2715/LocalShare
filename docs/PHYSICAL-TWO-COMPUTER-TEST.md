@@ -1,6 +1,6 @@
 # Physical Two-Computer Test
 
-Status: NOT VERIFIED in this environment.
+Status: NOT VERIFIED in this environment. The current build has passing virtual TLS chat/single-file/hash coverage, but physical LAN and mDNS behavior still require a second computer.
 
 1. Put a macOS computer and a Windows/macOS computer on the same Wi-Fi or Ethernet LAN.
 2. Disconnect the router WAN, or use a local hotspot with no upstream Internet.

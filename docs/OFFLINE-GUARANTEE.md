@@ -12,4 +12,4 @@ The application source contains no configured `http://`, `https://`, `ws://`, `w
 
 ## Status
 
-Static audit: PASS. Runtime packet capture with Internet disabled: NOT VERIFIED. Physical isolated-LAN test: NOT VERIFIED.
+Static audit: PASS. Packaged process-socket audit: PASS for LocalShare-owned sockets; evidence: `artifacts/test-results/offline-runtime-audit.txt`. Packet capture with Internet disabled: NOT VERIFIED. Physical isolated-LAN test: NOT VERIFIED.

@@ -47,6 +47,7 @@ pub fn validate(message: &Message) -> Result<(), String> {
             if sum != *total_bytes { return Err("Manifest size mismatch".into()); }
             for file in files { validate_filename(&file.name)?; }
         }
+        Message::HelloAck { protocol_version } if *protocol_version != PROTOCOL_VERSION => return Err("Unsupported protocol version".into()),
         Message::FileChunk { data, .. } if data.len() > 4 * 1024 * 1024 => return Err("Chunk too large".into()),
         _ => {}
     }
@@ -64,4 +65,6 @@ mod tests {
     use super::*;
     #[test] fn rejects_path_traversal() { assert!(validate_filename("../secret").is_err()); assert!(validate_filename("C:\\Windows\\x").is_err()); }
     #[test] fn round_trips_unicode_chat() { let msg = Message::Chat { id: Uuid::new_v4(), text: "नमस्ते 👋".into(), sent_at: 1 }; let bytes = encode(&msg).unwrap(); let out: Message = serde_json::from_slice(&bytes).unwrap(); assert!(matches!(out, Message::Chat { text, .. } if text == "नमस्ते 👋")); }
+    #[test] fn rejects_bad_manifest_and_version() { let msg = Message::TransferRequest { id: Uuid::new_v4(), files: vec![FileMeta { id: Uuid::new_v4(), name: "x".into(), relative_path: None, size: 4 }], total_bytes: 3 }; assert!(validate(&msg).is_err()); assert!(validate(&Message::HelloAck { protocol_version: 99 }).is_err()); }
+    #[test] fn rejects_absolute_and_windows_paths() { for name in ["../../secret.txt", "/Users/test.txt", "C:\\Windows\\test.txt", "..\\..\\bad.txt"] { assert!(validate_filename(name).is_err(), "accepted {name}"); } }
 }
