@@ -1,6 +1,6 @@
 # Current Implementation Audit
 
-Audit date: 2026-08-13. This reflects source inspection and the verification commands recorded in `artifacts/test-results/`.
+Audit date: 2026-08-14. This reflects source inspection and the verification commands recorded in `artifacts/test-results/`.
 
 Windows-specific build and host findings are recorded separately in `docs/WINDOWS-BUILD-AUDIT.md` and `docs/WINDOWS-VM-BUILD-REPORT.md`. The current Mac has no Windows VM or Windows toolchain, so Windows runtime/package claims remain blocked or unverified.
 
@@ -25,9 +25,9 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 ## Partial or not implemented
 
 - Trust is partially authenticated at the application identity layer: first-seen fingerprints require approval, trusted fingerprints persist in SQLite, and changed fingerprints are rejected. The underlying self-signed certificate key is still process-generated rather than persisted in native secure storage.
-- Reconnect state machine is still incomplete; stale mDNS peers are removed and known peers can be rediscovered, but bounded reconnect behavior is not physically tested.
+- Reconnect is bounded in source: trusted lower-UUID peers retry up to five times with capped exponential delays; Wi-Fi/LAN reconnect behavior is not physically tested.
 - Resume is not implemented.
-- Native notifications, certificate-key persistence, and resume remain incomplete. Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, folder transfer, updater check, trust prompt, and incoming approval UI paths are source-wired and packaged-navigation verified where noted.
+- Native OS notifications, certificate-key persistence, and resume remain incomplete. The Settings notification preference is persisted for the current in-app notice path. Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, folder transfer, updater check, trust prompt, and incoming approval UI paths are source-wired and packaged-navigation verified where noted.
 - Port fallback is now probed in `main`, but mDNS/manual-connect behavior under an occupied port is not yet tested.
 
 ## Actual test evidence
@@ -37,12 +37,12 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - Package contents: PASS — `Contents/MacOS/localshare` is the only executable; `CFBundleExecutable=localshare`; its checksum matches the release binary.
 - mDNS advertisement: PASS on this Mac — `dns-sd -B _localshare._tcp local.` observed the LocalShare UUID service; physical peer discovery remains unverified.
 - `cargo check`: PASS after AWS-LC startup fix and control/data queue refactor.
-- `cargo test --all-targets`: PASS, 4 protocol tests.
-- `cargo run --features two-node --bin two_node`: PASS for real TLS chat A→B/B→A, 1 MiB A→B, SHA-256 equality; evidence: `artifacts/test-results/two-node-pass.txt`.
+- `cargo test --all-targets`: PASS, 6 protocol tests in the library target and 9 tests in the production binary target.
+- `cargo run --features two-node --bin two_node`: PASS for real TLS chat A→B/B→A, chat A↔B during an active stream, 100 MiB and 1 GiB loopback streaming, and SHA-256 equality; evidence: `artifacts/test-results/two-node-large-files.txt`.
 - `npm run tauri build` with normal environment: FAIL because Homebrew Rust’s `rust-objcopy` symlink targets a missing LLVM path.
 - `scripts/build-macos.sh`: PASS — it supplies the Homebrew LLVM/Rust target PATH, builds the app, removes the test-only executable from the app payload, and creates a plain hdiutil DMG suitable for headless/offline sessions.
-- Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, and React pages verified.
-- Windows: hosted Windows workflow PASS on run `31724824519`; installer and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
+- Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, real diagnostics, and React pages verified.
+- Windows: hosted Windows workflow PASS on run `31748837359`; installer, signed updater artifacts, and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
 - Physical LAN / mDNS / packet capture: not verified; the optional updater is an explicit GitHub HTTPS exception when Internet is available.
 
 ## Windows readiness conclusion
@@ -51,4 +51,4 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - `scripts/build-windows.ps1` is prepared to build NSIS/MSI, validate genuine PE output, reject `two_node.exe`, normalize the primary installer to `release/windows/LocalShare-Setup.exe`, and emit checksums.
 - The Windows config uses Tauri `offlineInstaller` WebView2 mode; hosted build, silent install, and process launch passed. User-machine Internet-off installation remains unverified.
 - `dirs::data_local_dir()` and Windows `explorer` handling are present, and the LAN interface filter excludes common virtual adapters. Windows firewall, mDNS, DPAPI/credential storage, installed GUI, and Mac↔Windows transport remain unverified.
-- Current status: `WINDOWS BUILD: PASS`; `WINDOWS EXE: PASS`; `WINDOWS INSTALLER: PASS` on GitHub Actions run `31724824519`. Windows GUI visual, physical LAN, and firewall behavior remain unverified.
+- Current status: `WINDOWS BUILD: PASS`; `WINDOWS EXE: PASS`; `WINDOWS INSTALLER: PASS` on GitHub Actions run `31748837359`. Windows GUI visual, physical LAN, and firewall behavior remain unverified.

@@ -4,7 +4,7 @@ LocalShare is a native desktop LAN sharing app for direct file transfer and chat
 
 ## Current status
 
-The existing V1 implementation builds as a native macOS app, advertises/browses the LAN with mDNS, uses explicit first-contact fingerprint trust, and exposes clickable Messages, Transfer History, Settings, Diagnostics, incoming approval, file/folder pickers, and native drag/drop paths. Full acceptance is not claimed yet: resumable transfers, transfer cancellation, large/multi-file runtime verification, real updater installation, and physical two-computer verification remain incomplete or unverified.
+The existing V1 implementation builds as a native macOS app, advertises/browses the LAN with mDNS, uses explicit first-contact fingerprint trust, and exposes clickable Messages, Transfer History, Settings, Diagnostics, incoming approval, file/folder pickers, and native drag/drop paths. The loopback harness now passes 100 MiB and 1 GiB streaming/hash checks plus chat in both directions during the 100 MiB stream. Full physical acceptance is not claimed yet: multi-file/folder batch E2E, transfer cancellation, reconnect, resumable transfers, real updater installation, and physical two-computer verification remain incomplete or unverified.
 
 ## Architecture
 
@@ -49,7 +49,7 @@ Put both computers on the same Wi-Fi, Ethernet, or isolated hotspot LAN. Start L
 
 `RUN-LOCALSHARE.cmd` launches a prebuilt `LocalShare.exe` beside it using `%~dp0`. It is a portable fallback only; it is not the primary release artifact. The normal end user needs only `LocalShare-Setup.exe` and does not need Node.js, npm, Rust, Cargo, Git, or the source repository.
 
-The Windows installer is configured for Tauri’s offline WebView2 installer mode. GitHub Actions run `31724824519` built it, validated both PE files, silently installed it, launched the installed process, and uploaded `LocalShare-Setup.exe`. Physical Windows GUI/LAN/firewall and Internet-off installation tests remain separate. See [the Windows build audit](/Users/harshsinghal/Desktop/Local%20Network/docs/WINDOWS-BUILD-AUDIT.md) and [the final report](/Users/harshsinghal/Desktop/Local%20Network/docs/FINAL-SOFTWARE-REPORT.md).
+The Windows installer is configured for Tauri’s offline WebView2 installer mode. GitHub Actions run `31748837359` built it, validated both PE files, silently installed it, launched the installed process, generated signed updater artifacts, and uploaded `LocalShare-Setup.exe`. Physical Windows GUI/LAN/firewall and Internet-off installation tests remain separate. See [the Windows build audit](/Users/harshsinghal/Desktop/Local%20Network/docs/WINDOWS-BUILD-AUDIT.md) and [the final report](/Users/harshsinghal/Desktop/Local%20Network/docs/FINAL-SOFTWARE-REPORT.md).
 
 ## Security note
 

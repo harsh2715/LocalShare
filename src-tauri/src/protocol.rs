@@ -125,8 +125,19 @@ pub fn validate(message: &Message) -> Result<(), String> {
         Message::HelloAck { protocol_version } if *protocol_version != PROTOCOL_VERSION => {
             return Err("Unsupported protocol version".into())
         }
+        Message::FileStart { file, hash, .. } => {
+            validate_file_meta(file)?;
+            if hash.len() != 64 || hex::decode(hash).is_err() {
+                return Err("Invalid SHA-256 hash".into());
+            }
+        }
         Message::FileChunk { data, .. } if data.len() > 4 * 1024 * 1024 => {
             return Err("Chunk too large".into())
+        }
+        Message::FileChunk { offset, data, .. }
+            if offset.checked_add(data.len() as u64).is_none() =>
+        {
+            return Err("Chunk offset overflow".into())
         }
         _ => {}
     }
@@ -250,5 +261,28 @@ mod tests {
             };
             assert!(validate_file_meta(&file).is_err(), "accepted {path}");
         }
+    }
+
+    #[test]
+    fn rejects_invalid_file_hash_and_chunk_overflow() {
+        let file = FileMeta {
+            id: Uuid::new_v4(),
+            name: "data.bin".into(),
+            relative_path: None,
+            size: 1,
+        };
+        assert!(validate(&Message::FileStart {
+            transfer_id: Uuid::new_v4(),
+            file: file.clone(),
+            hash: "not-a-sha".into(),
+        })
+        .is_err());
+        assert!(validate(&Message::FileChunk {
+            transfer_id: Uuid::new_v4(),
+            file_id: file.id,
+            offset: u64::MAX,
+            data: vec![1],
+        })
+        .is_err());
     }
 }

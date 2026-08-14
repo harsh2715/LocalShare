@@ -13,7 +13,7 @@
 - [ ] Offline packet capture
 - [x] Packaged macOS runtime backend startup
 - [x] Native packaging fixed with `scripts/build-macos.sh` (Homebrew LLVM/Rust target bin PATH)
-- [x] GitHub-hosted Windows build — run `31724824519`
+- [x] GitHub-hosted Windows build — run `31748837359`
 - [x] Packaged Windows runtime process smoke test
 - [x] Windows NSIS installer silent install/launch smoke test
 - [ ] Windows GUI visual inspection

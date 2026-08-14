@@ -34,6 +34,9 @@ jobs:
           npm run build
           cargo check --all-targets --manifest-path src-tauri/Cargo.toml
           cargo test --all-targets --manifest-path src-tauri/Cargo.toml
+          $env:LOCALSHARE_TEST_SIZE_MB = '100'
+          $env:LOCALSHARE_TEST_ROOT = '.localshare-test-work/two-node'
+          cargo run --features two-node --bin two_node --manifest-path src-tauri/Cargo.toml
       - name: Build signed Windows bundles
         shell: pwsh
         run: .\scripts\build-windows.ps1 -SkipInstall -SkipFrontend -SkipRustChecks

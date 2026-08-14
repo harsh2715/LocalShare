@@ -1,22 +1,22 @@
 # LocalShare UI interaction audit
 
-Audit date: 2026-08-14. This records source-level wiring and build verification; a physical two-computer interaction session remains separate and is not claimed here.
+Audit date: 2026-08-14. This records source-level wiring plus direct inspection of the rebuilt packaged macOS GUI; a physical two-computer interaction session remains separate and is not claimed here.
 
 | Control | Result | Implementation/evidence |
 | --- | --- | --- |
 | Nearby devices | PASS | `src/main.tsx` page navigation and automatic peer list; verified in packaged `.app` |
-| Messages | PASS | `src/main.tsx` route, peer list, conversation view, `chat_history` command; packaged navigation verified |
+| Messages | PASS | `src/main.tsx` route, peer list, conversation view, persisted `chat_history` load when a peer is selected; packaged navigation verified |
 | Transfer history | PASS | `src/main.tsx` route, SQLite-backed `transfer_history` command; packaged navigation verified |
 | Settings | PASS | `src/main.tsx` form and persistent `save_settings` command; packaged navigation verified |
-| Diagnostics | PASS | `src/main.tsx` status view and Copy diagnostics action; packaged navigation verified |
+| Diagnostics | PASS | `src/main.tsx` real version/platform/IP/listener/mDNS/TLS/SQLite/receive/updater status view and Copy diagnostics action; packaged navigation verified |
 | Refresh | PASS | reloads local info and peers |
 | Device card | PASS | selects peer and opens conversation; automatic connection remains the normal path |
 | Send message | PASS | `send_chat` command and framed `Chat` message |
 | Multiline/Unicode chat | PASS source/unit coverage | textarea and UTF-8 protocol validation |
 | Select files | PASS | native multi-file picker calls `send_files` |
 | Send folder | PASS | native directory picker recursively enumerates a safe relative-path manifest |
-| Transfer progress | PASS source wiring | backend progress events render in the conversation |
-| Cancel transfer | PARTIAL | command/protocol/UI wiring exists; end-to-end cancellation is not yet verified |
+| Transfer progress | PASS source wiring | backend progress events render in the conversation; bounded 100 MiB/1 GiB harness evidence is recorded separately |
+| Cancel transfer | PARTIAL | command/protocol/UI wiring exists and leaves the peer session intact by design; end-to-end cancellation is not yet verified |
 | Open file | PASS when path exists | platform-specific `open`/`explorer` command |
 | Show in folder | PASS when path exists | platform-specific folder opener |
 | Change folder | PASS source wiring | directory picker persists the received-files location |

@@ -1,6 +1,6 @@
 # Windows Build Audit
 
-Audit date: 2026-08-13. This is an evidence-based source and hosted-runner audit. A genuine Windows installer was produced and downloaded from GitHub Actions run `31724824519`.
+Audit date: 2026-08-14. This is an evidence-based source and hosted-runner audit. A genuine Windows installer was produced and uploaded by GitHub Actions run `31748837359`.
 
 ## Production binary configuration
 
@@ -9,7 +9,7 @@ Audit date: 2026-08-13. This is an evidence-based source and hosted-runner audit
 - `src-tauri/tauri.conf.json` sets `mainBinaryName` to `localshare` and `productName` to `LocalShare`.
 - `scripts/build-windows.ps1` explicitly builds the `x86_64-pc-windows-msvc` production target, rejects `two_node.exe` in the bundle, validates the production file as x86_64 PE, and copies the NSIS setup executable to `release/windows/LocalShare-Setup.exe`.
 - `.github/workflows/windows-release.yml` runs this pipeline on GitHub’s `windows-latest` hosted runner: exact checkout, Node `.nvmrc`, `npm ci`, frontend build, stable Rust/MSVC target setup, Rust checks/tests, NSIS packaging, PE checks, SHA-256, and artifact upload.
-- The successful run also executed the Windows `two_node` transport harness, silent-installed the NSIS package, confirmed the installed `localshare.exe`, and launched the installed process. GUI visual inspection and physical LAN behavior were not claimed.
+- The successful run also executed the Windows `two_node` transport harness, silent-installed the NSIS package, confirmed the installed `localshare.exe`, launched the installed process, generated signed updater artifacts, and uploaded the artifacts. GUI visual inspection and physical LAN behavior were not claimed.
 
 ## Cross-platform source audit
 
@@ -25,7 +25,7 @@ Audit date: 2026-08-13. This is an evidence-based source and hosted-runner audit
 
 - The primary installer is NSIS, normalized to `release/windows/LocalShare-Setup.exe` by `scripts/build-windows.ps1`.
 - An MSI is also requested on Windows where WiX is available; it is optional and is copied as `release/windows/LocalShare.msi` only when actually emitted.
-- `src-tauri/tauri.conf.json` uses Tauri `offlineInstaller` WebView2 mode. The hosted-runner build produced a roughly 207 MiB installer and the smoke test installed/launched it; a true Internet-off installation on a user Windows computer remains unverified.
+- `src-tauri/tauri.conf.json` uses Tauri `offlineInstaller` WebView2 mode. Run `31748837359` produced a roughly 207 MiB installer and the smoke test installed/launched it; a true Internet-off installation on a user Windows computer remains unverified.
 - The generated Windows release also includes a PE-validated `LocalShare.exe`, `RUN-LOCALSHARE.cmd`, `README-WINDOWS.txt`, and `SHA256SUMS.txt` only after a real Windows build.
 
 ## Host evidence and blocker

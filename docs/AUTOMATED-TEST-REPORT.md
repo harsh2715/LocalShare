@@ -14,4 +14,4 @@ Date: 2026-08-13
 - Cancellation: source/UI wiring covers sender and receiver cancellation, but end-to-end transfer test is NOT VERIFIED
 - Reconnect/resume: NOT VERIFIED / resume NOT IMPLEMENTED
 - Packaged executable startup: PASS — stays alive, opens SQLite, binds TCP 32123, opens mDNS sockets; packaged GUI navigation was also inspected
-- Windows hosted release: PASS — run `31724824519` passed Windows Rust check/tests, the Windows two-node TLS/chat/single-file/SHA-256 harness, Tauri NSIS build, PE/hash validation, silent install, installed-process launch, and artifact upload. GUI visual and physical LAN tests remain unverified.
+- Windows hosted release: PASS — run `31748837359` passed Windows Rust check/tests, the Windows two-node TLS/chat/single-file/SHA-256 harness, Tauri NSIS build, PE/hash validation, silent install, installed-process launch, signed updater artifact generation, and artifact upload. GUI visual and physical LAN tests remain unverified.

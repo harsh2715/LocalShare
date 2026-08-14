@@ -1,3 +1,18 @@
-src-tauri/icons/icon.svg:1:<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="28" fill="#6759de"/><path d="M64 24c-8 18-22 26-38 28 4 25 17 39 38 48 21-9 34-23 38-48-16-2-30-10-38-28Z" fill="none" stroke="white" stroke-width="8" stroke-linejoin="round"/><path d="M45 65l13 13 26-28" fill="none" stroke="white" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-src-tauri/tauri.conf.json:2:  "$schema": "https://schema.tauri.app/config/2",
-src-tauri/tauri.conf.json:6:  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+LocalShare static offline audit — 2026-08-14
+
+Scope: production source, Tauri configuration, frontend package, scripts, and
+workflows. Cargo.lock registry URLs and documentation links are dependency or
+documentation metadata, not runtime endpoints.
+
+Allowed/expected hits:
+- src-tauri/tauri.conf.json: Tauri schema URL and localhost devUrl.
+- src-tauri/tauri.conf.json: the single optional updater endpoint at
+  https://github.com/harsh2715/LocalShare/releases/latest/download/latest.json.
+- scripts/create-update-manifest.py: GitHub Release asset URLs used only when
+  publishing signed updates.
+
+No production LAN fallback was found for PairDrop, public signaling, STUN,
+TURN, Firebase, Supabase, public WebSockets, telemetry, or remote fonts.
+
+Result: PASS for the static offline audit, with the explicitly documented
+Internet-only updater exception.

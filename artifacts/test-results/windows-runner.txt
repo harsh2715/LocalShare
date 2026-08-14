@@ -6,10 +6,10 @@ Runner: windows-latest
 Requested artifact: LocalShare-Setup.exe
 
 Status: PASS
-Run: https://github.com/harsh2715/LocalShare/actions/runs/31724824519
-Commit: bb3fed350ebaa6fcb6f64e0a5b518a4fc4024475
-Artifact: https://github.com/harsh2715/LocalShare/actions/runs/31724824519/artifacts/9191863029
-Installer SHA-256: 26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02
+Run: https://github.com/harsh2715/LocalShare/actions/runs/31748837359
+Commit: 268d578dbd8e7ff4a7c5e1a3106894eda981d7fb
+Artifact: https://github.com/harsh2715/LocalShare/actions/runs/31748837359/artifacts/9200960897
+Installer SHA-256: 0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe
 Installer downloaded locally from the artifact and identified as a genuine
 PE32 Nullsoft Installer self-extracting archive.
 
@@ -27,3 +27,10 @@ The workflow is configured to:
   the installed application process successfully.
 
 Windows runtime/LAN and physical Mac↔Windows testing are intentionally not performed by the hosted runner.
+Latest verified run: 31748837359
+Run URL: https://github.com/harsh2715/LocalShare/actions/runs/31748837359
+Commit: 268d578dbd8e7ff4a7c5e1a3106894eda981d7fb
+Installer artifact: LocalShare-Setup, artifact ID 9200960897
+Metadata artifact: LocalShare-Windows-release-metadata, artifact ID 9200961449
+Signed updater artifact: LocalShare-updater-artifacts, artifact ID 9200962962
+Installer SHA-256: 0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe

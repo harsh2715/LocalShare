@@ -30,14 +30,14 @@ unverified. Resume remains not implemented.
 ## Windows release result
 
 ```text
-WINDOWS RUNNER: PASS
+WINDOWS RUNNER: PASS — run `31748837359` at commit `268d578dbd8e7ff4a7c5e1a3106894eda981d7fb`
 WINDOWS BUILD: PASS
 LOCALSHARE.EXE: PASS
 LOCALSHARE.EXE PE VALIDATION: PASS — x86_64 PE on runner
 NSIS BUILD: PASS
 LOCALSHARE-SETUP.EXE: PASS
 INSTALLER PE VALIDATION: PASS — genuine PE32 Nullsoft installer
-INSTALLER SHA-256: 26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02
+INSTALLER SHA-256: 0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe
 GITHUB ARTIFACT: PASS
 ARTIFACT NAME: LocalShare-Setup
 WINDOWS INSTALL AUTOMATION: PASS — silent NSIS install completed
@@ -46,9 +46,9 @@ WINDOWS GUI VISUAL TEST: NOT VERIFIED — hosted runner has no visual inspection
 WINDOWS RUNTIME: PARTIAL — process launch and transport harness passed; physical runtime not verified
 ```
 
-Successful workflow run: [31724824519](https://github.com/harsh2715/LocalShare/actions/runs/31724824519)
+Successful workflow run: [31748837359](https://github.com/harsh2715/LocalShare/actions/runs/31748837359)
 
-Final artifact download: [LocalShare-Setup](https://github.com/harsh2715/LocalShare/actions/runs/31724824519/artifacts/9191863029)
+Final artifact download: [LocalShare-Setup](https://github.com/harsh2715/LocalShare/actions/runs/31748837359/artifacts/9200960897)
 
 The exact installer is also copied locally at `/Users/harshsinghal/Desktop/Local Network/release/windows/LocalShare-Setup.exe`.
 
@@ -66,7 +66,7 @@ Fix: added the required checked-in ICO resource, generated reproducibly from the
 
 | Area | Status | Evidence |
 | --- | --- | --- |
-| Checkout | PASS | Hosted run checked out commit `bb3fed350ebaa6fcb6f64e0a5b518a4fc4024475` |
+| Checkout | PASS | Hosted run checked out commit `268d578dbd8e7ff4a7c5e1a3106894eda981d7fb` |
 | Node setup | PASS | Node 22 from `.nvmrc` |
 | Rust/MSVC setup | PASS | Stable Rust and `x86_64-pc-windows-msvc` |
 | npm lockfile install | PASS | `npm ci` |
@@ -79,10 +79,10 @@ Fix: added the required checked-in ICO resource, generated reproducibly from the
 | `LocalShare.exe` PE | PASS | x86_64 PE validation |
 | NSIS build | PASS | Setup executable emitted |
 | Installer PE | PASS | PE signature validated; downloaded artifact is PE32 Nullsoft installer |
-| SHA-256 | PASS | `26614a23763f11e78d3ab9bda9e0fd50c0d4b69a974944295de8e21895d69e02` |
+| SHA-256 | PASS | `0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe` |
 | Silent install | PASS | NSIS `/S` smoke test |
 | Installed process launch | PASS | Process stayed alive for smoke interval |
-| Artifact upload | PASS | `LocalShare-Setup` artifact ID `9191863029` |
+| Artifact upload | PASS | `LocalShare-Setup` artifact ID `9200960897`; signed updater artifacts ID `9200962962` |
 | Auto IP Windows | NOT VERIFIED | No physical user LAN |
 | mDNS Windows | NOT VERIFIED | No physical user LAN |
 | Windows firewall | NOT VERIFIED | Hosted runner cannot validate user firewall prompt/policy |

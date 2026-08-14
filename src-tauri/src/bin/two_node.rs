@@ -3,6 +3,7 @@ use localshare::protocol::{self, FileMeta, Message, MAX_FRAME_BYTES, PROTOCOL_VE
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -102,11 +103,24 @@ fn configs() -> (std::sync::Arc<ServerConfig>, std::sync::Arc<ClientConfig>) {
 }
 
 fn hash(path: &Path) -> String {
-    hex::encode(Sha256::digest(fs::read(path).unwrap()))
+    let mut input = fs::File::open(path).unwrap();
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let read = input.read(&mut buffer).unwrap();
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    hex::encode(hasher.finalize())
 }
-fn make_fixture(path: &Path) {
-    let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
-    fs::write(path, data).unwrap();
+fn make_fixture(path: &Path, size_mb: u64) {
+    let mut output = fs::File::create(path).unwrap();
+    let buffer: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
+    for _ in 0..size_mb {
+        output.write_all(&buffer).unwrap();
+    }
 }
 
 #[tokio::main]
@@ -115,13 +129,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .install_default()
         .ok();
     let root = PathBuf::from(
-        std::env::var("LOCALSHARE_TEST_ROOT").unwrap_or_else(|_| "../artifacts/two-node".into()),
+        std::env::var("LOCALSHARE_TEST_ROOT")
+            .unwrap_or_else(|_| "../.localshare-test-work/two-node".into()),
     );
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("a"))?;
     fs::create_dir_all(root.join("b"))?;
     let source = root.join("a/1mb.bin");
-    make_fixture(&source);
+    let size_mb = std::env::var("LOCALSHARE_TEST_SIZE_MB")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    make_fixture(&source, size_mb);
     let file = FileMeta {
         id: Uuid::new_v4(),
         name: "1mb.bin".into(),
@@ -228,8 +248,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|e| e.to_string())?;
         let mut hasher = Sha256::new();
         let mut received = 0u64;
+        let mut saw_chat_during_transfer = false;
         loop {
             match read_msg(&mut br).await? {
+                Message::Chat { text, .. } if text == "hello-from-a-during-transfer" => {
+                    saw_chat_during_transfer = true;
+                }
                 Message::FileChunk { offset, data, .. } => {
                     if offset != received {
                         return Err("non-contiguous chunk offset".into());
@@ -243,11 +267,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         output.flush().await.map_err(|e| e.to_string())?;
-        Ok::<(u64, String), String>((received, expected_hash))
+        Ok::<(u64, String, bool), String>((received, expected_hash, saw_chat_during_transfer))
+    });
+    let mut b_chat_reader = tokio::spawn(async move {
+        loop {
+            match read_msg(&mut ar).await? {
+                Message::Chat { text, .. } if text == "hello-from-b-during-transfer" => {
+                    return Ok::<bool, String>(true);
+                }
+                _ => {}
+            }
+        }
     });
     let mut source_file = tokio::fs::File::open(&source).await?;
     let mut buffer = vec![0u8; 256 * 1024];
     let mut offset = 0;
+    let mut sent_during_transfer_chat = false;
     let digest = hash(&source);
     write_msg(
         &mut aw,
@@ -274,6 +309,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
         offset += read as u64;
+        if !sent_during_transfer_chat {
+            write_msg(
+                &mut aw,
+                &Message::Chat {
+                    id: Uuid::new_v4(),
+                    text: "hello-from-a-during-transfer".into(),
+                    sent_at: 3,
+                },
+            )
+            .await?;
+            write_msg(
+                &mut bw,
+                &Message::Chat {
+                    id: Uuid::new_v4(),
+                    text: "hello-from-b-during-transfer".into(),
+                    sent_at: 4,
+                },
+            )
+            .await?;
+            let joined_b_chat = timeout(Duration::from_secs(2), &mut b_chat_reader)
+                .await
+                .map_err(|error| error.to_string())?;
+            let b_seen_result = joined_b_chat.map_err(|error| error.to_string())?;
+            let b_seen = b_seen_result.map_err(|error| error)?;
+            assert!(b_seen);
+            sent_during_transfer_chat = true;
+        }
     }
     write_msg(
         &mut aw,
@@ -283,11 +345,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )
     .await?;
-    let (received, expected_hash) = receiver.await??;
+    let (received, expected_hash, saw_chat_during_transfer) = receiver.await??;
     assert_eq!(received, file.size);
     assert_eq!(digest, expected_hash);
+    assert!(saw_chat_during_transfer);
     fs::rename(&destination_part, root.join("b/1mb.bin"))?;
     assert_eq!(digest, hash(&root.join("b/1mb.bin")));
-    println!("PASS chat A→B; PASS chat B→A; PASS single file A→B; PASS SHA-256; source={} destination={}", source.display(), root.join("b/1mb.bin").display());
+    println!("PASS chat A→B; PASS chat B→A; PASS chat during transfer A↔B; PASS streaming single file A→B ({} MiB); PASS SHA-256; source={} destination={}", size_mb, source.display(), root.join("b/1mb.bin").display());
     Ok(())
 }

@@ -36,9 +36,26 @@ The database uses SQLite WAL mode. Settings, chats, trust decisions, history,
 and the persistent device UUID survive restart. The current session sockets,
 peer availability, progress events, and in-memory cancellation flags do not.
 
+## Other runtime state
+
+- TLS certificate material is generated in process memory by `tls_configs()`;
+  there is no persistent TLS private-key file and no plaintext private-key
+  fallback. The current V1 therefore has fingerprint trust, but not a
+  persisted certificate key.
+- Transfer cancellation flags, pending approval channels, active peer
+  sessions, mDNS daemon state, and reconnect attempts are process memory only.
+- There is no application log file or telemetry database. The Rust tracing
+  subscriber writes diagnostics to the process stdout/stderr stream; packaged
+  launches do not create a project-local log directory.
+- The updater stores its enabled/disabled preference in SQLite as
+  `check_for_updates`. Update metadata and downloads are handled by the Tauri
+  updater plugin/OS temporary storage; LocalShare does not create a separate
+  updater database. The updater is the only configured Internet path and is
+  independent of LAN startup.
+
 ## Filesystem and cleanup
 
-Received files are written to a temporary `.localshare-part` name, streamed in
+Received files are written to a temporary `filename.ext.localshare-part` name, streamed in
 bounded chunks, hashed with SHA-256, and renamed to the final collision-safe
 name only after size and hash verification. Existing names become, for
 example, `report.pdf`, `report (1).pdf`, and `report (2).pdf`.

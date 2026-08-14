@@ -1,0 +1,27 @@
+LocalShare virtual two-node streaming verification
+
+Harness: src-tauri/src/bin/two_node.rs
+Transport: real TLS-framed protocol over isolated loopback TCP
+Test workspace: .localshare-test-work/
+
+100 MiB run:
+PASS chat A->B
+PASS chat B->A
+PASS chat during transfer A<->B
+PASS streaming single file A->B
+PASS SHA-256 source == destination
+Source: .localshare-test-work/two-node-100mb/a/1mb.bin
+Destination: .localshare-test-work/two-node-100mb/b/1mb.bin
+
+1024 MiB run:
+PASS chat A->B
+PASS chat B->A
+PASS streaming single file A->B
+PASS SHA-256 source == destination
+Source: .localshare-test-work/two-node-1gb/a/1mb.bin
+Destination: .localshare-test-work/two-node-1gb/b/1mb.bin
+
+The harness generated the fixture in bounded chunks and hashed the source and
+destination incrementally. This proves the production framing/protocol path
+handles a 1 GiB stream in the virtual loopback environment; it does not claim
+physical LAN performance or a 1 GiB Mac<->Windows result.
