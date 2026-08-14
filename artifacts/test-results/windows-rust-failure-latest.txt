@@ -1,0 +1,19 @@
+Latest Windows hosted-runner failure — 2026-08-14
+
+Run: https://github.com/harsh2715/LocalShare/actions/runs/31781545871
+Commit: 02716b08c30d70c5511a38117e76fd1678424a9d
+Step: Run Rust tests
+
+Failure:
+  tests::receive_paths_stay_inside_root
+  accepted /tmp/outside.txt
+
+Root cause:
+On Windows, Rust's Windows Path implementation does not treat a slash-only
+path such as /tmp/outside.txt as an absolute path. The cross-platform receive
+path helper checked Path::is_absolute() but did not independently reject a
+leading slash.
+
+Fix:
+safe_receive_path now rejects leading '/' and '\\' in addition to absolute
+paths, drive/colon paths, backslashes, NUL, and parent-directory components.

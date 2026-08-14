@@ -731,6 +731,8 @@ fn safe_receive_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
         || relative.contains('\0')
         || relative.contains(':')
         || relative.contains('\\')
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
     {
         return Err("Unsafe receive path".into());
     }
