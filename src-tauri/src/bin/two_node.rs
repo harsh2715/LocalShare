@@ -105,7 +105,7 @@ fn configs() -> (std::sync::Arc<ServerConfig>, std::sync::Arc<ClientConfig>) {
 fn hash(path: &Path) -> String {
     let mut input = fs::File::open(path).unwrap();
     let mut hasher = Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
+    let mut buffer = vec![0u8; 1024 * 1024];
     loop {
         let read = input.read(&mut buffer).unwrap();
         if read == 0 {

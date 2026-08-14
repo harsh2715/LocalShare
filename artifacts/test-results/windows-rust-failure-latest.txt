@@ -17,3 +17,12 @@ leading slash.
 Fix:
 safe_receive_path now rejects leading '/' and '\\' in addition to absolute
 paths, drive/colon paths, backslashes, NUL, and parent-directory components.
+
+Second failure from the next run:
+Run: https://github.com/harsh2715/LocalShare/actions/runs/31782577913
+Step: Run Windows two-node transport harness
+Failure: STATUS_STACK_OVERFLOW while starting the 100 MiB harness transfer.
+Root cause: the test-only incremental hash helper used a 1 MiB fixed array on
+the Windows main thread stack.
+Fix: the helper now allocates its 1 MiB read buffer on the heap, matching the
+bounded-buffer strategy used by the production sender/receiver.
