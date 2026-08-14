@@ -42,7 +42,7 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - `npm run tauri build` with normal environment: FAIL because Homebrew Rust’s `rust-objcopy` symlink targets a missing LLVM path.
 - `scripts/build-macos.sh`: PASS — it supplies the Homebrew LLVM/Rust target PATH, builds the app, removes the test-only executable from the app payload, and creates a plain hdiutil DMG suitable for headless/offline sessions.
 - Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, real diagnostics, and React pages verified.
-- Windows: hosted Windows workflow PASS on run `31748837359`; installer, signed updater artifacts, and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
+- Windows: hosted Windows workflow PASS on run `31783746842`; installer, signed updater artifacts, 100 MiB loopback transport, and installed-process smoke test passed. Physical Windows GUI/LAN behavior remains unverified.
 - Physical LAN / mDNS / packet capture: not verified; the optional updater is an explicit GitHub HTTPS exception when Internet is available.
 
 ## Windows readiness conclusion
@@ -51,4 +51,4 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - `scripts/build-windows.ps1` is prepared to build NSIS/MSI, validate genuine PE output, reject `two_node.exe`, normalize the primary installer to `release/windows/LocalShare-Setup.exe`, and emit checksums.
 - The Windows config uses Tauri `offlineInstaller` WebView2 mode; hosted build, silent install, and process launch passed. User-machine Internet-off installation remains unverified.
 - `dirs::data_local_dir()` and Windows `explorer` handling are present, and the LAN interface filter excludes common virtual adapters. Windows firewall, mDNS, DPAPI/credential storage, installed GUI, and Mac↔Windows transport remain unverified.
-- Current status: `WINDOWS BUILD: PASS`; `WINDOWS EXE: PASS`; `WINDOWS INSTALLER: PASS` on GitHub Actions run `31748837359`. Windows GUI visual, physical LAN, and firewall behavior remain unverified.
+- Current status: `WINDOWS BUILD: PASS`; `WINDOWS EXE: PASS`; `WINDOWS INSTALLER: PASS` on GitHub Actions run `31783746842`. Windows GUI visual, physical LAN, and firewall behavior remain unverified.

@@ -1,6 +1,6 @@
 # Windows Build Audit
 
-Audit date: 2026-08-14. This is an evidence-based source and hosted-runner audit. A genuine Windows installer was produced and uploaded by GitHub Actions run `31748837359`.
+Audit date: 2026-08-14. This is an evidence-based source and hosted-runner audit. A genuine Windows installer was produced and uploaded by GitHub Actions run `31783746842`.
 
 ## Production binary configuration
 
@@ -25,7 +25,7 @@ Audit date: 2026-08-14. This is an evidence-based source and hosted-runner audit
 
 - The primary installer is NSIS, normalized to `release/windows/LocalShare-Setup.exe` by `scripts/build-windows.ps1`.
 - An MSI is also requested on Windows where WiX is available; it is optional and is copied as `release/windows/LocalShare.msi` only when actually emitted.
-- `src-tauri/tauri.conf.json` uses Tauri `offlineInstaller` WebView2 mode. Run `31748837359` produced a roughly 207 MiB installer and the smoke test installed/launched it; a true Internet-off installation on a user Windows computer remains unverified.
+- `src-tauri/tauri.conf.json` uses Tauri `offlineInstaller` WebView2 mode. Run `31783746842` produced the installer and the smoke test installed/launched it; a true Internet-off installation on a user Windows computer remains unverified.
 - The generated Windows release also includes a PE-validated `LocalShare.exe`, `RUN-LOCALSHARE.cmd`, `README-WINDOWS.txt`, and `SHA256SUMS.txt` only after a real Windows build.
 
 ## Host evidence and blocker

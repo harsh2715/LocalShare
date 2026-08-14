@@ -1,36 +1,27 @@
 LocalShare GitHub Actions Windows runner status
-Date: 2026-08-13
+Date: 2026-08-14
 
 Workflow: .github/workflows/windows-release.yml
 Runner: windows-latest
 Requested artifact: LocalShare-Setup.exe
 
 Status: PASS
-Run: https://github.com/harsh2715/LocalShare/actions/runs/31748837359
-Commit: 268d578dbd8e7ff4a7c5e1a3106894eda981d7fb
-Artifact: https://github.com/harsh2715/LocalShare/actions/runs/31748837359/artifacts/9200960897
-Installer SHA-256: 0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe
-Installer downloaded locally from the artifact and identified as a genuine
-PE32 Nullsoft Installer self-extracting archive.
+Run: https://github.com/harsh2715/LocalShare/actions/runs/31783746842
+Commit: 9e2b600aa22bc9b640f4488c4782d3cfa3678d1b
+Installer artifact: https://github.com/harsh2715/LocalShare/actions/runs/31783746842/artifacts/9213523891
+Metadata artifact: https://github.com/harsh2715/LocalShare/actions/runs/31783746842/artifacts/9213524244
+Signed updater artifact: https://github.com/harsh2715/LocalShare/actions/runs/31783746842/artifacts/9213525558
+Installer SHA-256: a48eacbc290e7caa333d26317ff4b0625265162b8ed65470341b30821ffec1fa
 
-The workflow is configured to:
-- checkout the exact source;
-- use Node 22 from .nvmrc and npm ci;
-- install stable Rust and x86_64-pc-windows-msvc;
-- run npm run build;
-- run cargo check --all-targets and cargo test --all-targets;
-- build the Tauri NSIS bundle;
-- run the Windows two-node transport harness (chat both directions, single
-  file, SHA-256);
-- reject two_node.exe, validate PE headers, hash the installer, and upload LocalShare-Setup.exe.
-- silently install the NSIS package into the runner temp directory and launch
-  the installed application process successfully.
+Verified stages:
+- exact source checkout, Node 22 from .nvmrc, npm ci, frontend build;
+- stable Rust/MSVC target, cargo check --all-targets, cargo test --all-targets;
+- Windows two-node TLS harness with 100 MiB streaming, chat both directions
+  during the transfer, and SHA-256 equality;
+- Tauri production build using localshare.exe, with two_node.exe rejected;
+- genuine x86_64 PE LocalShare.exe and genuine PE NSIS installer validation;
+- silent NSIS installation, installed process launch, checksum generation, and
+  artifact upload.
 
-Windows runtime/LAN and physical Mac↔Windows testing are intentionally not performed by the hosted runner.
-Latest verified run: 31748837359
-Run URL: https://github.com/harsh2715/LocalShare/actions/runs/31748837359
-Commit: 268d578dbd8e7ff4a7c5e1a3106894eda981d7fb
-Installer artifact: LocalShare-Setup, artifact ID 9200960897
-Metadata artifact: LocalShare-Windows-release-metadata, artifact ID 9200961449
-Signed updater artifact: LocalShare-updater-artifacts, artifact ID 9200962962
-Installer SHA-256: 0adf5db34a1cc28ed3d7d0d35a6ca6b6d299cb42ccc5d2044c1a4d6e66c39bbe
+Windows GUI visual, physical Windows LAN/mDNS, firewall, Wi-Fi reconnect, and
+Internet-off physical tests are intentionally not claimed by a hosted runner.

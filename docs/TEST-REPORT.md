@@ -21,7 +21,7 @@
 - UI build wiring: PASS for Messages, history, settings, diagnostics,
   received-folder actions, folder selection, updater check, trust prompt, and
   transfer approval actions.
-- Windows hosted workflow: PASS on run `31748837359`; Rust check/tests,
+- Windows hosted workflow: PASS on run `31783746842`; Rust check/tests,
   Windows two-node transport, NSIS packaging, PE/hash validation, silent
   install/process launch, signed updater artifact generation, and artifact
   upload all passed.
