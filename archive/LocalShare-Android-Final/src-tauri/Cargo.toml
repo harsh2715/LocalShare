@@ -1,0 +1,24 @@
+[package]
+name = "localshare-app"
+version = "1.1.0"
+edition = "2021"
+
+[lib]
+name = "localshare_app_lib"
+path = "src/main.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+localshare-core = { path = "../crates/localshare-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2.7.2"
+tauri-plugin-fs = "2.5.1"
+tokio = { version = "1", features = ["sync", "rt-multi-thread"] }
+percent-encoding = "2"
+uuid = { version = "1", features = ["v4"] }

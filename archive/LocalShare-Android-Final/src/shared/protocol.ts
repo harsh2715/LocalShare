@@ -1,0 +1,14 @@
+import { randomUUID } from 'node:crypto';
+import type { Duplex } from 'node:stream';
+
+export const PROTOCOL_VERSION = 1;
+export const MAX_FRAME_BYTES = 256 * 1024;
+export const MAX_CHAT_BYTES = 64 * 1024;
+export const messageTypes = ['hello', 'hello.ack', 'file.open', 'pair.request', 'pair.response', 'chat.message', 'chat.ack', 'transfer.offer', 'transfer.response', 'transfer.control', 'transfer.progress', 'heartbeat', 'error'] as const;
+export type ProtocolMessageType = typeof messageTypes[number];
+export interface ProtocolMessage { version: number; type: ProtocolMessageType; id: string; timestamp: number; payload: Record<string, unknown>; }
+function isUuid(value: unknown): value is string { return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+export function makeMessage(type: ProtocolMessageType, payload: Record<string, unknown>, version = PROTOCOL_VERSION, id: string = randomUUID()): ProtocolMessage { return { version, type, id, timestamp: Date.now(), payload }; }
+export function encodeFrame(message: ProtocolMessage): Buffer { const data = Buffer.from(JSON.stringify(message), 'utf8'); if (data.length > MAX_FRAME_BYTES) throw new Error('Frame exceeds maximum size'); const out = Buffer.allocUnsafe(4 + data.length); out.writeUInt32BE(data.length, 0); data.copy(out, 4); return out; }
+export function decodeFrames(buffer: Buffer): { messages: ProtocolMessage[]; remainder: Buffer } { const messages: ProtocolMessage[] = []; let offset = 0; while (buffer.length - offset >= 4) { const length = buffer.readUInt32BE(offset); if (length > MAX_FRAME_BYTES) throw new Error('Frame exceeds maximum size'); if (buffer.length - offset - 4 < length) break; let parsed: unknown; try { parsed = JSON.parse(buffer.subarray(offset + 4, offset + 4 + length).toString('utf8')); } catch { throw new Error('Invalid JSON frame'); } if (!parsed || typeof parsed !== 'object') throw new Error('Invalid protocol frame'); const value = parsed as Record<string, unknown>; if (value.version !== PROTOCOL_VERSION || typeof value.type !== 'string' || !messageTypes.includes(value.type as ProtocolMessageType) || !isUuid(value.id) || typeof value.timestamp !== 'number' || !value.payload || typeof value.payload !== 'object') throw new Error('Invalid or unsupported protocol frame'); messages.push({ version: value.version as number, type: value.type as ProtocolMessageType, id: value.id, timestamp: value.timestamp, payload: value.payload as Record<string, unknown> }); offset += 4 + length; } return { messages, remainder: buffer.subarray(offset) }; }
+export function writeFrame(stream: Duplex, message: ProtocolMessage): Promise<void> { const frame = encodeFrame(message); return new Promise((resolve, reject) => { if (stream.write(frame)) resolve(); else stream.once('drain', resolve); stream.once('error', reject); }); }
