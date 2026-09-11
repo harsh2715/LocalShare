@@ -2166,6 +2166,7 @@ fn start_mdns(state: Arc<AppState>, port: u16) {
     }
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     install_crypto_provider();
     tracing_subscriber::fmt()
