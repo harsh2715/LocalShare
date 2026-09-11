@@ -32,6 +32,8 @@ fn protect_file(path: &Path) -> Result<(), String> {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("Unable to protect device identity: {e}"))?;
     }
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
