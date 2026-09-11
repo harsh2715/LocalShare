@@ -16,6 +16,7 @@ fi
 # generated app directory. Remove only this generated bundle, never sources.
 BUNDLE_DIR="src-tauri/target/release/bundle/macos"
 APP_DIR="$BUNDLE_DIR/LocalShare.app"
+APP_TAR_PATH="$BUNDLE_DIR/LocalShare.app.tar.gz"
 APP_VERSION="$(awk -F'"' '/"version"/ {print $4; exit}' src-tauri/tauri.conf.json)"
 DMG_PATH="$BUNDLE_DIR/LocalShare_${APP_VERSION}_$(rustc -vV | awk '/host:/ {print $2}' | sed 's/-apple-darwin//').dmg"
 rm -rf "$APP_DIR"
@@ -43,6 +44,16 @@ else
   codesign --force --deep --sign - "$APP_DIR"
 fi
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+
+# Tauri creates the updater archive before the post-build bundle cleanup and
+# seal above. Repack it from the final app so updater downloads contain the
+# same sealed bundle as the DMG. Re-sign the new archive when the updater key
+# is available; never leave a signature that belongs to an older archive.
+rm -f "$APP_TAR_PATH" "$APP_TAR_PATH.sig"
+tar -czf "$APP_TAR_PATH" -C "$BUNDLE_DIR" "$(basename "$APP_DIR")"
+if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
+  npm run tauri signer -- sign "$APP_TAR_PATH"
+fi
 hdiutil create -volname LocalShare -srcfolder "$APP_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
 echo "Built application: $APP_DIR"
 echo "Built disk image: $DMG_PATH"
