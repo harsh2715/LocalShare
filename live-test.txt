@@ -1,0 +1,4 @@
+LocalShare live transfer test
+Source: macOS
+Destination: Android
+Expected result: encrypted LAN transfer with SHA-256 verification.

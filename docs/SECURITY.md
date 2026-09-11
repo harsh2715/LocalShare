@@ -24,4 +24,4 @@ complete public-key certificate-pinning design. A future hardening step can
 persist a certificate/public key in native secure storage without changing the
 LAN protocol boundary.
 
-Secure Keychain/Credential Manager storage, Ed25519 identity keys, certificate pinning, changed-key warnings, and a trust database schema are planned but not fully connected to the session handshake. Rustls provider initialization is now explicit at process startup, preventing the previous packaged runtime panic.
+Secure Keychain/Credential Manager storage, persistent public-key identity, and certificate pinning are still planned. The current SQLite trust database is connected to first-contact approval and changed-fingerprint rejection, but the fingerprint is derived from the persistent device UUID rather than the process certificate. Rustls provider initialization is explicit at process startup, preventing the previous packaged runtime panic.

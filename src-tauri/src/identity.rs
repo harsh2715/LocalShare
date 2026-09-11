@@ -29,10 +29,19 @@ pub fn load_or_create(
     let device_name = configured_name
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| {
-            hostname::get()
+            let hostname = hostname::get()
                 .ok()
                 .and_then(|v| v.into_string().ok())
-                .unwrap_or_else(|| "This device".into())
+                .unwrap_or_default();
+            if hostname.trim().is_empty() || hostname.eq_ignore_ascii_case("localhost") {
+                #[cfg(target_os = "android")]
+                return "Android device".into();
+                #[cfg(target_os = "ios")]
+                return "iPhone or iPad".into();
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                return "This device".into();
+            }
+            hostname
         });
     Ok(Identity {
         device_id,

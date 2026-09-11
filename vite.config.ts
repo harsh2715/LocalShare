@@ -4,4 +4,12 @@ import react from '@vitejs/plugin-react';
 // Tauri loads the built frontend from its custom tauri://localhost scheme.
 // Relative asset URLs are required for the packaged app; root-relative `/assets`
 // URLs work in Vite's dev server but render a blank window in the bundle.
-export default defineConfig({ base: './', plugins: [react()] });
+export default defineConfig({
+  base: './',
+  plugins: [react()],
+  server: {
+    host: '127.0.0.1',
+    port: 1420,
+    strictPort: true,
+  },
+});

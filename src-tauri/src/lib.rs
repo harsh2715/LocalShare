@@ -1,1 +1,2135 @@
+mod identity;
 pub mod protocol;
+mod storage;
+
+use identity::Identity;
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use protocol::{FileMeta, Message, MAX_FRAME_BYTES, PROTOCOL_VERSION};
+use rusqlite::Connection;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    net::{IpAddr, SocketAddr},
+    path::{Path, PathBuf},
+    process::Command,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{SystemTime, UNIX_EPOCH},
+};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::{mpsc, oneshot},
+    time::{sleep, timeout, Duration},
+};
+use tokio_rustls::{
+    rustls::{
+        self,
+        client::danger::{ServerCertVerified, ServerCertVerifier},
+        pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
+        ClientConfig, DigitallySignedStruct, ServerConfig,
+    },
+    TlsAcceptor, TlsConnector,
+};
+use uuid::Uuid;
+
+#[derive(Clone, Serialize)]
+struct Peer {
+    id: String,
+    name: String,
+    address: String,
+    fingerprint: String,
+    state: String,
+    platform: String,
+    trusted: bool,
+}
+#[derive(Clone, Serialize)]
+struct LocalInfo {
+    version: String,
+    device_id: String,
+    device_name: String,
+    platform: String,
+    architecture: String,
+    fingerprint: String,
+    port: u16,
+    addresses: Vec<String>,
+    mdns: String,
+    mdns_advertise: String,
+    mdns_browse: String,
+    listener_state: String,
+    tls_state: String,
+    database_state: String,
+    receive_directory: String,
+    updater: String,
+    transport: String,
+}
+#[derive(Clone, Serialize)]
+struct ChatEvent {
+    peer_id: String,
+    id: String,
+    text: String,
+    sent_at: i64,
+    direction: String,
+}
+#[derive(Clone, Serialize)]
+struct TransferEvent {
+    peer_id: String,
+    id: String,
+    name: String,
+    size: u64,
+    transferred: u64,
+    state: String,
+    direction: String,
+}
+#[derive(Clone, Serialize)]
+struct ChatRecord {
+    id: String,
+    peer_id: String,
+    direction: String,
+    content: String,
+    sent_at: i64,
+    state: String,
+}
+#[derive(Clone, Serialize)]
+struct HistoryRecord {
+    id: String,
+    peer_id: String,
+    name: String,
+    size: u64,
+    direction: String,
+    result: String,
+    path: Option<String>,
+    created_at: i64,
+}
+#[derive(Clone, Serialize)]
+struct KnownPeerRecord {
+    id: String,
+    name: String,
+    fingerprint: String,
+    trusted_at: i64,
+}
+#[derive(Clone, Serialize)]
+struct SettingsInfo {
+    device_name: String,
+    download_location: String,
+    ask_before_receive: bool,
+    notifications: bool,
+    check_for_updates: bool,
+}
+
+struct Session {
+    control_tx: mpsc::Sender<Message>,
+    data_tx: mpsc::Sender<Message>,
+}
+struct AppState {
+    identity: Identity,
+    device_name: Mutex<String>,
+    db: Mutex<Connection>,
+    peers: Mutex<HashMap<String, Peer>>,
+    sessions: Mutex<HashMap<String, Session>>,
+    transfers: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+    active_transfer_peers: Mutex<HashMap<String, Uuid>>,
+    incoming_cancellations: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
+    pending_incoming: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
+    pending_outgoing: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
+    connecting: Mutex<HashMap<String, bool>>,
+    reconnect_attempts: Mutex<HashMap<String, u8>>,
+    mdns: Mutex<Option<ServiceDaemon>>,
+    local: Mutex<LocalInfo>,
+    tls_server: Arc<ServerConfig>,
+    app: AppHandle,
+}
+struct IncomingFile {
+    transfer_id: Uuid,
+    file: FileMeta,
+    expected_hash: String,
+    part: PathBuf,
+    final_path: PathBuf,
+    out: tokio::fs::File,
+    hasher: Sha256,
+    received: u64,
+}
+
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+fn emit<T: Serialize + Clone>(app: &AppHandle, name: &str, payload: T) {
+    let _ = app.emit(name, payload);
+}
+
+fn update_local_status(state: &Arc<AppState>, update: impl FnOnce(&mut LocalInfo)) {
+    update(&mut state.local.lock().unwrap());
+}
+
+fn tls_configs(identity: &Identity) -> Result<(Arc<ServerConfig>, Arc<ClientConfig>), String> {
+    let cert = rcgen::generate_simple_self_signed(vec![identity.device_id.to_string()])
+        .map_err(|e| e.to_string())?;
+    let cert_der = cert.cert.der().clone();
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()));
+    let server = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert_der], key)
+        .map_err(|e| e.to_string())?;
+    let client = ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoVerifier))
+        .with_no_client_auth();
+    Ok((Arc::new(server), Arc::new(client)))
+}
+
+fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
+#[derive(Debug)]
+struct NoVerifier;
+impl ServerCertVerifier for NoVerifier {
+    fn verify_server_cert(
+        &self,
+        _: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _: &[u8],
+        _: &CertificateDer<'_>,
+        _: &DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _: &[u8],
+        _: &CertificateDer<'_>,
+        _: &DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+        ]
+    }
+}
+
+async fn write_message<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    msg: &Message,
+) -> Result<(), String> {
+    let bytes = protocol::encode(msg).map_err(|e| e.to_string())?;
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err("Message too large".into());
+    }
+    writer
+        .write_u32(bytes.len() as u32)
+        .await
+        .map_err(|e| e.to_string())?;
+    writer.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    writer.flush().await.map_err(|e| e.to_string())
+}
+async fn read_message<R: AsyncReadExt + Unpin>(reader: &mut R) -> Result<Message, String> {
+    let len = reader.read_u32().await.map_err(|e| e.to_string())? as usize;
+    if len == 0 || len > MAX_FRAME_BYTES {
+        return Err("Invalid frame length".into());
+    }
+    let mut buf = vec![0; len];
+    reader
+        .read_exact(&mut buf)
+        .await
+        .map_err(|e| e.to_string())?;
+    let msg: Message = serde_json::from_slice(&buf).map_err(|e| e.to_string())?;
+    protocol::validate(&msg)?;
+    Ok(msg)
+}
+
+async fn handle_connection(
+    state: Arc<AppState>,
+    stream: TcpStream,
+    outgoing: bool,
+    addr: SocketAddr,
+) -> Result<(), String> {
+    let (_, client) = tls_configs(&state.identity)?;
+    if outgoing {
+        let connector = TlsConnector::from(client);
+        let tls = connector
+            .connect(
+                ServerName::try_from("localshare").map_err(|e| e.to_string())?,
+                stream,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        handle_tls_stream(state, tls, addr).await
+    } else {
+        let tls = TlsAcceptor::from(state.tls_server.clone())
+            .accept(stream)
+            .await
+            .map_err(|e| e.to_string())?;
+        handle_tls_stream(state, tls, addr).await
+    }
+}
+
+async fn handle_tls_stream<S>(state: Arc<AppState>, tls: S, addr: SocketAddr) -> Result<(), String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut reader, mut writer) = tokio::io::split(tls);
+    let device_name = state.device_name.lock().unwrap().clone();
+    write_message(
+        &mut writer,
+        &Message::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            device_id: state.identity.device_id,
+            device_name,
+            fingerprint: state.identity.fingerprint.clone(),
+        },
+    )
+    .await?;
+    let hello = read_message(&mut reader).await?;
+    let (peer_id, peer_name, fingerprint) = match hello {
+        Message::Hello {
+            device_id,
+            device_name,
+            fingerprint,
+            ..
+        } => (device_id.to_string(), device_name, fingerprint),
+        _ => return Err("Expected HELLO".into()),
+    };
+    write_message(
+        &mut writer,
+        &Message::HelloAck {
+            protocol_version: PROTOCOL_VERSION,
+        },
+    )
+    .await?;
+    let trusted = {
+        let db = state.db.lock().unwrap();
+        match storage::trusted_fingerprint(&db, &peer_id) {
+            Some(expected) if expected != fingerprint => {
+                return Err("Known peer identity changed; connection rejected".into());
+            }
+            _ => {
+                let _ = storage::trust_peer(&db, &peer_id, &peer_name, &fingerprint, now());
+                true
+            }
+        }
+    };
+    let peer = Peer {
+        id: peer_id.clone(),
+        name: peer_name.clone(),
+        address: addr.to_string(),
+        fingerprint: fingerprint.clone(),
+        state: "connected".into(),
+        platform: "LAN peer".into(),
+        trusted: true,
+    };
+    state.connecting.lock().unwrap().remove(&peer_id);
+    state
+        .peers
+        .lock()
+        .unwrap()
+        .insert(peer_id.clone(), peer.clone());
+    emit(&state.app, "peer-updated", &peer);
+    let (control_tx, mut control_rx) = mpsc::channel::<Message>(128);
+    let (data_tx, mut data_rx) = mpsc::channel::<Message>(16);
+    {
+        let mut sessions = state.sessions.lock().unwrap();
+        if sessions.contains_key(&peer_id) {
+            return Err("Duplicate peer session rejected".into());
+        }
+        sessions.insert(
+            peer_id.clone(),
+            Session {
+                control_tx: control_tx.clone(),
+                data_tx: data_tx.clone(),
+            },
+        );
+    }
+    state.reconnect_attempts.lock().unwrap().remove(&peer_id);
+    let writer_task = tokio::spawn(async move {
+        loop {
+            tokio::select! { biased; Some(msg) = control_rx.recv() => { if write_message(&mut writer, &msg).await.is_err() { break; } }, Some(msg) = data_rx.recv() => { if write_message(&mut writer, &msg).await.is_err() { break; } }, else => break }
+        }
+    });
+    let mut incoming: Option<IncomingFile> = None;
+    let mut accepted_transfers = HashSet::new();
+    let mut incoming_transfer_details = HashMap::<Uuid, TransferEvent>::new();
+    loop {
+        match read_message(&mut reader).await {
+            Ok(Message::Ping) => {
+                let _ = control_tx.send(Message::Pong).await;
+            }
+            Ok(Message::Pong) => {}
+            Ok(Message::Chat { id, text, sent_at }) => {
+                let _ = state.db.lock().unwrap().execute("INSERT OR REPLACE INTO chat_messages VALUES (?1,?2,'received',?3,?4,'delivered')", rusqlite::params![id.to_string(), peer_id, text, sent_at]);
+                emit(
+                    &state.app,
+                    "chat-message",
+                    ChatEvent {
+                        peer_id: peer_id.clone(),
+                        id: id.to_string(),
+                        text,
+                        sent_at,
+                        direction: "received".into(),
+                    },
+                );
+            }
+            Ok(Message::TransferRequest {
+                id,
+                files,
+                directories,
+                total_bytes,
+            }) => {
+                if accepted_transfers.contains(&id)
+                    || !accepted_transfers.is_empty()
+                    || incoming.is_some()
+                {
+                    control_tx
+                        .send(Message::TransferReject {
+                            id,
+                            reason: "Another transfer is already active".into(),
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    continue;
+                }
+                let ask = storage::setting(&state.db.lock().unwrap(), "ask_before_receive")
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                let display_name = directories
+                    .first()
+                    .cloned()
+                    .or_else(|| files.first().map(|file| file.name.clone()))
+                    .unwrap_or_else(|| format!("{} file(s)", files.len()));
+                let request_event = TransferEvent {
+                    peer_id: peer_id.clone(),
+                    id: id.to_string(),
+                    name: display_name,
+                    size: total_bytes,
+                    transferred: 0,
+                    state: if ask { "pending" } else { "transferring" }.into(),
+                    direction: "received".into(),
+                };
+                if ask {
+                    let task_state = state.clone();
+                    let task_control = control_tx.clone();
+                    let task_peer = peer_id.clone();
+                    let task_req = request_event.clone();
+                    let task_dirs = directories.clone();
+                    let task_files = files.clone();
+                    emit(&state.app, "transfer-request", request_event.clone());
+                    emit(&state.app, "transfer-progress", request_event.clone());
+                    tokio::spawn(async move {
+                        let (tx, rx) = oneshot::channel();
+                        task_state.pending_incoming.lock().unwrap().insert(id, tx);
+                        let decision = matches!(timeout(Duration::from_secs(120), rx).await, Ok(Ok(true)));
+                        task_state.pending_incoming.lock().unwrap().remove(&id);
+                        if decision {
+                            if let Ok(dir) = download_dir(&task_state) {
+                                for directory in &task_dirs {
+                                    if protocol::validate_relative_path(directory).is_ok() {
+                                        if let Ok(p) = safe_receive_path(&dir, directory) {
+                                            let _ = fs::create_dir_all(p);
+                                        }
+                                    }
+                                }
+                            }
+                            let _ = task_control.send(Message::TransferAccept { id }).await;
+                        } else {
+                            record_transfer_history(
+                                &task_state,
+                                &task_peer,
+                                &format!("{} file(s)", task_files.len()),
+                                total_bytes,
+                                "received",
+                                "rejected",
+                                None,
+                            );
+                            let _ = task_control.send(Message::TransferReject {
+                                id,
+                                reason: "Receiver declined the transfer".into(),
+                            }).await;
+                        }
+                    });
+                    accepted_transfers.insert(id);
+                    incoming_transfer_details.insert(id, request_event);
+                    continue;
+                }
+                if let Ok(dir) = download_dir(&state) {
+                    for directory in &directories {
+                        if protocol::validate_relative_path(directory).is_ok() {
+                            if let Ok(p) = safe_receive_path(&dir, directory) {
+                                let _ = fs::create_dir_all(p);
+                            }
+                        }
+                    }
+                }
+                accepted_transfers.insert(id);
+                incoming_transfer_details.insert(id, request_event.clone());
+                emit(&state.app, "transfer-progress", request_event);
+                let _ = control_tx.send(Message::TransferAccept { id }).await;
+            }
+            Ok(Message::TransferAccept { id }) => {
+                if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+                    let _ = waiter.send(true);
+                }
+            }
+            Ok(Message::TransferReject { id, .. }) => {
+                if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+                    let _ = waiter.send(false);
+                }
+            }
+            Ok(Message::FileStart {
+                transfer_id,
+                file,
+                hash,
+            }) => {
+                if !accepted_transfers.contains(&transfer_id) || incoming.is_some() {
+                    let _ = control_tx.send(Message::TransferReject { id: transfer_id, reason: "File start is not allowed for this transfer".into() }).await;
+                    continue;
+                }
+                let dir = match download_dir(&state) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = control_tx.send(Message::TransferReject { id: transfer_id, reason: format!("Cannot access download dir: {e}") }).await;
+                        continue;
+                    }
+                };
+                if let Err(e) = protocol::validate_file_meta(&file) {
+                    let _ = control_tx.send(Message::TransferReject { id: transfer_id, reason: format!("Invalid file meta: {e}") }).await;
+                    continue;
+                }
+                let relative = file
+                    .relative_path
+                    .clone()
+                    .unwrap_or_else(|| file.name.clone());
+                let final_path = match safe_receive_path(&dir, &relative).and_then(|p| unique_path_for_relative(&dir, &p)) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let _ = control_tx.send(Message::TransferReject { id: transfer_id, reason: format!("Invalid path: {e}") }).await;
+                        continue;
+                    }
+                };
+                if let Some(parent) = final_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let part = final_path.with_file_name(format!(
+                    "{}.localshare-part",
+                    final_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("file")
+                ));
+                let out = match tokio::fs::File::create(&part).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        eprintln!("Failed to create part file at {:?}: {}", part, e);
+                        let _ = control_tx.send(Message::TransferReject { id: transfer_id, reason: format!("Cannot create file: {e}") }).await;
+                        accepted_transfers.remove(&transfer_id);
+                        incoming_transfer_details.remove(&transfer_id);
+                        continue;
+                    }
+                };
+                state
+                    .incoming_cancellations
+                    .lock()
+                    .unwrap()
+                    .insert(transfer_id, Arc::new(AtomicBool::new(false)));
+                incoming = Some(IncomingFile {
+                    transfer_id,
+                    file,
+                    expected_hash: hash,
+                    part,
+                    final_path,
+                    out,
+                    hasher: Sha256::new(),
+                    received: 0,
+                });
+            }
+            Ok(Message::FileChunk {
+                file_id,
+                offset,
+                data,
+                transfer_id,
+            }) => {
+                if !accepted_transfers.contains(&transfer_id) {
+                    return Err("Chunk is not associated with an accepted transfer".into());
+                }
+                let cancelled = state
+                    .incoming_cancellations
+                    .lock()
+                    .unwrap()
+                    .get(&transfer_id)
+                    .map(|flag| flag.load(Ordering::Relaxed))
+                    .unwrap_or(false);
+                if cancelled {
+                    if let Some(file) = incoming.take() {
+                        let _ = tokio::fs::remove_file(file.part).await;
+                    }
+                    state
+                        .incoming_cancellations
+                        .lock()
+                        .unwrap()
+                        .remove(&transfer_id);
+                    let _ = control_tx
+                        .send(Message::TransferCancel { id: transfer_id })
+                        .await;
+                    accepted_transfers.remove(&transfer_id);
+                    incoming_transfer_details.remove(&transfer_id);
+                    record_transfer_history(
+                        &state,
+                        &peer_id,
+                        "Transfer",
+                        0,
+                        "received",
+                        "cancelled",
+                        None,
+                    );
+                    emit(
+                        &state.app,
+                        "transfer-error",
+                        serde_json::json!({"peer_id": peer_id, "id": transfer_id.to_string(), "state": "cancelled", "message": "Transfer cancelled"}),
+                    );
+                    continue;
+                }
+                let file = incoming.as_mut().ok_or("Chunk arrived before file start")?;
+                if file.transfer_id != transfer_id
+                    || file.file.id != file_id
+                    || file.received != offset
+                    || file
+                        .received
+                        .checked_add(data.len() as u64)
+                        .unwrap_or(u64::MAX)
+                        > file.file.size
+                {
+                    return Err("Invalid file chunk offset or size".into());
+                }
+                file.out.write_all(&data).await.map_err(|e| e.to_string())?;
+                file.hasher.update(&data);
+                file.received += data.len() as u64;
+                emit(
+                    &state.app,
+                    "transfer-progress",
+                    TransferEvent {
+                        peer_id: peer_id.clone(),
+                        id: transfer_id.to_string(),
+                        name: file.file.name.clone(),
+                        size: file.file.size,
+                        transferred: file.received,
+                        state: "transferring".into(),
+                        direction: "received".into(),
+                    },
+                );
+            }
+            Ok(Message::FileEnd {
+                transfer_id,
+                file_id,
+            }) => {
+                if !accepted_transfers.contains(&transfer_id) {
+                    return Err("File end is not associated with an accepted transfer".into());
+                }
+                let mut file = incoming
+                    .take()
+                    .ok_or("File end arrived before file start")?;
+                if file.transfer_id != transfer_id || file.file.id != file_id {
+                    let _ = tokio::fs::remove_file(&file.part).await;
+                    accepted_transfers.remove(&transfer_id);
+                    incoming_transfer_details.remove(&transfer_id);
+                    return Err("File end does not match the active file".into());
+                }
+                file.out.flush().await.map_err(|e| e.to_string())?;
+                let valid = file.received == file.file.size
+                    && hex::encode(file.hasher.finalize()) == file.expected_hash;
+                if valid {
+                    let history_name = file.file.name.clone();
+                    let history_size = file.file.size;
+                    let history_path = file.final_path.to_string_lossy().into_owned();
+                    let rename_res = tokio::fs::rename(&file.part, &file.final_path).await;
+                    if let Err(_) = rename_res {
+                        let _ = tokio::fs::copy(&file.part, &file.final_path).await;
+                        let _ = tokio::fs::remove_file(&file.part).await;
+                    }
+                    #[cfg(target_os = "android")]
+                    {
+                        let public_dl = PathBuf::from("/storage/emulated/0/Download/LocalShare");
+                        let _ = fs::create_dir_all(&public_dl);
+                        let public_file = public_dl.join(&file.file.name);
+                        let _ = fs::copy(&file.final_path, &public_file);
+                    }
+                    state
+                        .incoming_cancellations
+                        .lock()
+                        .unwrap()
+                        .remove(&transfer_id);
+                    record_transfer_history(
+                        &state,
+                        &peer_id,
+                        &history_name,
+                        history_size,
+                        "received",
+                        "completed",
+                        Some(Path::new(&history_path)),
+                    );
+                    emit(
+                        &state.app,
+                        "transfer-progress",
+                        TransferEvent {
+                            peer_id: peer_id.clone(),
+                            id: transfer_id.to_string(),
+                            name: file.file.name,
+                            size: file.file.size,
+                            transferred: file.received,
+                            state: "saved".into(),
+                            direction: "received".into(),
+                        },
+                    );
+                } else {
+                    state
+                        .incoming_cancellations
+                        .lock()
+                        .unwrap()
+                        .remove(&transfer_id);
+                    let _ = tokio::fs::remove_file(&file.part).await;
+                    emit(
+                        &state.app,
+                        "transfer-error",
+                        serde_json::json!({"peer_id": peer_id, "id": transfer_id.to_string(), "state": "failed", "message": "Transfer failed integrity verification"}),
+                    );
+                    record_transfer_history(
+                        &state,
+                        &peer_id,
+                        &file.file.name,
+                        file.file.size,
+                        "received",
+                        "failed",
+                        None,
+                    );
+                    accepted_transfers.remove(&transfer_id);
+                    incoming_transfer_details.remove(&transfer_id);
+                }
+            }
+            Ok(Message::TransferCancel { id }) => {
+                if let Some(flag) = state.transfers.lock().unwrap().get(&id) {
+                    flag.store(true, Ordering::Relaxed);
+                }
+                if let Some(file) = incoming.take() {
+                    if file.transfer_id == id {
+                        let _ = tokio::fs::remove_file(file.part).await;
+                    }
+                }
+                state.incoming_cancellations.lock().unwrap().remove(&id);
+                accepted_transfers.remove(&id);
+                incoming_transfer_details.remove(&id);
+                if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+                    let _ = waiter.send(false);
+                }
+                emit(
+                    &state.app,
+                    "transfer-error",
+                    serde_json::json!({"peer_id": peer_id, "id": id.to_string(), "state": "cancelled", "message": "Transfer cancelled by peer"}),
+                );
+            }
+            Ok(Message::TransferComplete { id }) => {
+                let completed_incoming = accepted_transfers.remove(&id);
+                if completed_incoming {
+                    if let Some(mut event) = incoming_transfer_details.remove(&id) {
+                        event.transferred = event.size;
+                        event.state = "completed".into();
+                        if event.size == 0 {
+                            if let Ok(root) = download_dir(&state) {
+                                let path = root.join(&event.name);
+                                record_transfer_history(
+                                    &state,
+                                    &peer_id,
+                                    &event.name,
+                                    0,
+                                    "received",
+                                    "completed",
+                                    Some(&path),
+                                );
+                            }
+                        }
+                        emit(&state.app, "transfer-complete", event);
+                    }
+                    let _ = control_tx.send(Message::TransferComplete { id }).await;
+                } else {
+                    emit(
+                        &state.app,
+                        "transfer-complete",
+                        serde_json::json!({"peer_id": peer_id, "id": id.to_string()}),
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    if let Some(file) = incoming.take() {
+        let _ = tokio::fs::remove_file(file.part).await;
+        state
+            .incoming_cancellations
+            .lock()
+            .unwrap()
+            .remove(&file.transfer_id);
+    }
+    state.sessions.lock().unwrap().remove(&peer_id);
+    state.connecting.lock().unwrap().remove(&peer_id);
+    if let Some(p) = state.peers.lock().unwrap().get_mut(&peer_id) {
+        p.state = "offline".into();
+        emit(&state.app, "peer-updated", p.clone());
+    }
+    let reconnect_address = state
+        .peers
+        .lock()
+        .unwrap()
+        .get(&peer_id)
+        .filter(|peer| peer.trusted)
+        .and_then(|peer| peer.address.parse::<SocketAddr>().ok());
+    if let Some(address) = reconnect_address {
+        schedule_reconnect(state.clone(), peer_id.clone(), address);
+    }
+    writer_task.abort();
+    Ok(())
+}
+
+fn safe_receive_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if path.is_absolute()
+        || relative.contains('\0')
+        || relative.contains(':')
+        || relative.contains('\\')
+        || relative.starts_with('/')
+        || relative.starts_with('\\')
+    {
+        return Err("Unsafe receive path".into());
+    }
+    let candidate = root.join(path);
+    if candidate
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("Unsafe receive path".into());
+    }
+    Ok(candidate)
+}
+
+fn unique_path_for_relative(root: &Path, candidate: &Path) -> Result<PathBuf, String> {
+    if !candidate.exists() {
+        return Ok(candidate.to_path_buf());
+    }
+    let parent = candidate.parent().ok_or("Invalid receive path")?;
+    if !parent.starts_with(root) {
+        return Err("Receive path escaped destination".into());
+    }
+    let filename = candidate
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid receive filename")?;
+    let path = Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(filename);
+    let extension = path.extension().and_then(|value| value.to_str());
+    for index in 1..=10_000 {
+        let renamed = match extension {
+            Some(extension) => format!("{stem} ({index}).{extension}"),
+            None => format!("{stem} ({index})"),
+        };
+        let next = parent.join(renamed);
+        if !next.exists() {
+            return Ok(next);
+        }
+    }
+    Err("Unable to choose a safe duplicate filename".into())
+}
+
+fn expanded_transfer_inputs(
+    paths: &[String],
+) -> Result<(Vec<(PathBuf, FileMeta)>, Vec<String>), String> {
+    let mut expanded = Vec::new();
+    let mut directories = Vec::new();
+    for raw in paths {
+        let path = PathBuf::from(raw);
+        let metadata = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        if metadata.file_type().is_symlink() {
+            return Err("Symbolic links are not supported in transfers".into());
+        }
+        if metadata.is_file() {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Invalid filename")?
+                .to_string();
+            protocol::validate_filename(&name)?;
+            expanded.push((
+                path,
+                FileMeta {
+                    id: Uuid::new_v4(),
+                    name,
+                    relative_path: None,
+                    size: metadata.len(),
+                },
+            ));
+        } else if metadata.is_dir() {
+            let root = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("Invalid folder name")?
+                .to_string();
+            protocol::validate_filename(&root)?;
+            directories.push(root.clone());
+            let canonical_root = fs::canonicalize(&path).map_err(|e| e.to_string())?;
+            let mut stack = vec![path.clone()];
+            while let Some(current) = stack.pop() {
+                for entry in fs::read_dir(&current).map_err(|e| e.to_string())? {
+                    let entry = entry.map_err(|e| e.to_string())?;
+                    let child = entry.path();
+                    let child_meta = fs::symlink_metadata(&child).map_err(|e| e.to_string())?;
+                    if child_meta.file_type().is_symlink() {
+                        return Err(format!(
+                            "Folder contains unsupported symbolic link: {}",
+                            child.display()
+                        ));
+                    }
+                    if child_meta.is_dir() {
+                        let relative = child
+                            .strip_prefix(&path)
+                            .map_err(|_| "Unable to enumerate folder")?;
+                        let relative = Path::new(&root).join(relative);
+                        let relative = relative.to_string_lossy().replace('\\', "/");
+                        protocol::validate_relative_path(&relative)?;
+                        directories.push(relative);
+                        stack.push(child);
+                        continue;
+                    }
+                    if !child_meta.is_file() {
+                        continue;
+                    }
+                    let canonical_child = fs::canonicalize(&child).map_err(|e| e.to_string())?;
+                    if !canonical_child.starts_with(&canonical_root) {
+                        return Err("Folder contains a path outside its selected root".into());
+                    }
+                    let relative = child
+                        .strip_prefix(&path)
+                        .map_err(|_| "Unable to enumerate folder")?;
+                    let relative = Path::new(&root).join(relative);
+                    let relative = relative.to_string_lossy().replace('\\', "/");
+                    let name = child
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or("Invalid filename")?
+                        .to_string();
+                    let file = FileMeta {
+                        id: Uuid::new_v4(),
+                        name,
+                        relative_path: Some(relative),
+                        size: child_meta.len(),
+                    };
+                    protocol::validate_file_meta(&file)?;
+                    expanded.push((child, file));
+                }
+            }
+        } else {
+            return Err(format!("Unsupported transfer path: {}", path.display()));
+        }
+    }
+    if expanded.is_empty() && directories.is_empty() {
+        return Err("The selected folder contains no files".into());
+    }
+    directories.sort();
+    directories.dedup();
+    Ok((expanded, directories))
+}
+
+fn download_dir(state: &AppState) -> Result<PathBuf, String> {
+    let configured = state
+        .db
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT value FROM settings WHERE key='download_location'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    let dir = configured
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(storage::default_download_dir()?);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+fn record_transfer_history(
+    state: &AppState,
+    peer_id: &str,
+    name: &str,
+    size: u64,
+    direction: &str,
+    result: &str,
+    path: Option<&Path>,
+) {
+    let path = path.map(|value| value.to_string_lossy().into_owned());
+    let _ = state.db.lock().unwrap().execute(
+        "INSERT INTO transfer_history(id,peer_id,name,size,direction,result,path,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+        rusqlite::params![Uuid::new_v4().to_string(), peer_id, name, size, direction, result, path, now()],
+    );
+}
+
+#[tauri::command]
+fn local_info(state: State<'_, Arc<AppState>>) -> LocalInfo {
+    let mut info = state.local.lock().unwrap().clone();
+    info.device_name = state.device_name.lock().unwrap().clone();
+    info.receive_directory = download_dir(state.inner())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "Unavailable".into());
+    info.updater = if cfg!(desktop)
+        && storage::setting(&state.db.lock().unwrap(), "check_for_updates")
+            .map(|value| value != "false")
+            .unwrap_or(true)
+    {
+        "enabled · Internet only".into()
+    } else {
+        "disabled".into()
+    };
+    info.database_state = "healthy".into();
+    info
+}
+#[tauri::command]
+fn list_peers(state: State<'_, Arc<AppState>>) -> Vec<Peer> {
+    state.peers.lock().unwrap().values().cloned().collect()
+}
+#[tauri::command]
+fn chat_history(
+    state: State<'_, Arc<AppState>>,
+    peer_id: Option<String>,
+) -> Result<Vec<ChatRecord>, String> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db.prepare("SELECT id, peer_id, direction, content, sent_at, state FROM chat_messages WHERE (?1 IS NULL OR peer_id=?1) ORDER BY sent_at ASC").map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(rusqlite::params![peer_id], |r| {
+            Ok(ChatRecord {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                direction: r.get(2)?,
+                content: r.get(3)?,
+                sent_at: r.get(4)?,
+                state: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn transfer_history(state: State<'_, Arc<AppState>>) -> Result<Vec<HistoryRecord>, String> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db.prepare("SELECT id, peer_id, name, size, direction, result, path, created_at FROM transfer_history ORDER BY created_at DESC").map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(HistoryRecord {
+                id: r.get(0)?,
+                peer_id: r.get(1)?,
+                name: r.get(2)?,
+                size: r.get(3)?,
+                direction: r.get(4)?,
+                result: r.get(5)?,
+                path: r.get(6)?,
+                created_at: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn known_peers(state: State<'_, Arc<AppState>>) -> Result<Vec<KnownPeerRecord>, String> {
+    let db = state.db.lock().unwrap();
+    let mut stmt = db
+        .prepare(
+            "SELECT device_id, name, fingerprint, trusted_at FROM trusted_peers ORDER BY trusted_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(KnownPeerRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                fingerprint: row.get(2)?,
+                trusted_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn clear_transfer_history(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute("DELETE FROM transfer_history", [])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+fn settings(state: State<'_, Arc<AppState>>) -> Result<SettingsInfo, String> {
+    let db = state.db.lock().unwrap();
+    let download = storage::setting(&db, "download_location").unwrap_or_else(|| {
+        storage::default_download_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    Ok(SettingsInfo {
+        device_name: storage::setting(&db, "device_name")
+            .unwrap_or_else(|| state.device_name.lock().unwrap().clone()),
+        download_location: download,
+        ask_before_receive: storage::setting(&db, "ask_before_receive")
+            .map(|v| v != "false")
+            .unwrap_or(true),
+        notifications: storage::setting(&db, "notifications")
+            .map(|v| v != "false")
+            .unwrap_or(true),
+        check_for_updates: cfg!(desktop)
+            && storage::setting(&db, "check_for_updates")
+                .map(|v| v != "false")
+                .unwrap_or(true),
+    })
+}
+#[tauri::command]
+fn save_settings(
+    state: State<'_, Arc<AppState>>,
+    device_name: String,
+    download_location: String,
+    ask_before_receive: bool,
+    notifications: bool,
+    check_for_updates: bool,
+) -> Result<(), String> {
+    let cleaned_name = device_name.trim();
+    if cleaned_name.is_empty() {
+        return Err("Device name cannot be empty".into());
+    }
+    if cleaned_name.chars().count() > 80 {
+        return Err("Device name must be 80 characters or fewer".into());
+    }
+    if device_name.chars().any(char::is_control) {
+        return Err("Device name cannot contain line breaks or control characters".into());
+    }
+    let destination = if download_location.trim().is_empty() {
+        storage::default_download_dir()?
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        PathBuf::from(download_location.trim())
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(download_location.trim()))
+            .to_string_lossy()
+            .into_owned()
+    };
+    fs::create_dir_all(&destination).map_err(|e| e.to_string())?;
+    let old_name = state.device_name.lock().unwrap().clone();
+    {
+        let mut db = state.db.lock().unwrap();
+        let transaction = db.transaction().map_err(|e| e.to_string())?;
+        storage::set_setting(&transaction, "device_name", cleaned_name)?;
+        storage::set_setting(&transaction, "download_location", &destination)?;
+        storage::set_setting(
+            &transaction,
+            "ask_before_receive",
+            if ask_before_receive { "true" } else { "false" },
+        )?;
+        storage::set_setting(
+            &transaction,
+            "notifications",
+            if notifications { "true" } else { "false" },
+        )?;
+        storage::set_setting(
+            &transaction,
+            "check_for_updates",
+            if check_for_updates { "true" } else { "false" },
+        )?;
+        transaction.commit().map_err(|e| e.to_string())?;
+    }
+    *state.device_name.lock().unwrap() = cleaned_name.to_string();
+    state.local.lock().unwrap().device_name = cleaned_name.to_string();
+    if old_name != cleaned_name {
+        if let Some(mdns) = state.mdns.lock().unwrap().take() {
+            let _ = mdns.shutdown();
+        }
+        let port = state.local.lock().unwrap().port;
+        start_mdns(state.inner().clone(), port);
+    }
+    Ok(())
+}
+#[tauri::command]
+fn open_location(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.exists() {
+        return Err("Location does not exist".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_file(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    if !target.is_file() {
+        return Err("File does not exist".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_folder(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path);
+    let folder = if target.is_dir() {
+        target
+    } else {
+        target
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or("No containing folder")?
+    };
+    if !folder.exists() {
+        return Err("Folder does not exist".into());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+    {
+        Command::new("xdg-open")
+            .arg(&folder)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+#[tauri::command]
+fn accept_transfer(state: State<'_, Arc<AppState>>, transfer_id: String) -> Result<(), String> {
+    let id = Uuid::parse_str(&transfer_id).map_err(|e| e.to_string())?;
+    state
+        .pending_incoming
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .and_then(|sender| sender.send(true).ok())
+        .ok_or("Transfer request is no longer pending".to_string())
+}
+#[tauri::command]
+fn reject_transfer(state: State<'_, Arc<AppState>>, transfer_id: String) -> Result<(), String> {
+    let id = Uuid::parse_str(&transfer_id).map_err(|e| e.to_string())?;
+    state
+        .pending_incoming
+        .lock()
+        .unwrap()
+        .remove(&id)
+        .and_then(|sender| sender.send(false).ok())
+        .ok_or("Transfer request is no longer pending".to_string())
+}
+
+#[tauri::command]
+async fn trust_peer(state: State<'_, Arc<AppState>>, peer_id: String) -> Result<(), String> {
+    let peer = state
+        .peers
+        .lock()
+        .unwrap()
+        .get(&peer_id)
+        .cloned()
+        .ok_or("Peer is no longer available")?;
+    if peer.fingerprint.trim().is_empty() {
+        return Err("Peer did not provide an identity fingerprint".into());
+    }
+    {
+        let db = state.db.lock().unwrap();
+        storage::trust_peer(&db, &peer.id, &peer.name, &peer.fingerprint, now())?;
+    }
+    let addr = peer
+        .address
+        .parse::<SocketAddr>()
+        .map_err(|e| format!("Invalid peer address: {e}"))?;
+    let updated = Peer {
+        trusted: true,
+        state: "connecting".into(),
+        ..peer
+    };
+    state
+        .peers
+        .lock()
+        .unwrap()
+        .insert(peer_id.clone(), updated.clone());
+    emit(&state.app, "peer-updated", updated);
+    if state.sessions.lock().unwrap().contains_key(&peer_id) {
+        return Ok(());
+    }
+    if state
+        .connecting
+        .lock()
+        .unwrap()
+        .insert(peer_id.clone(), true)
+        .is_some()
+    {
+        return Ok(());
+    }
+    let connect_state = state.inner().clone();
+    tokio::spawn(async move {
+        let result = match TcpStream::connect(addr).await {
+            Ok(stream) => handle_connection(connect_state.clone(), stream, true, addr).await,
+            Err(error) => Err(error.to_string()),
+        };
+        if result.is_err() {
+            connect_state.connecting.lock().unwrap().remove(&peer_id);
+        }
+    });
+    Ok(())
+}
+#[tauri::command]
+async fn connect_manual(
+    state: State<'_, Arc<AppState>>,
+    ip: String,
+    port: u16,
+) -> Result<(), String> {
+    let normalized = ip.trim().trim_start_matches('[').trim_end_matches(']');
+    let parsed_ip = normalized
+        .parse::<IpAddr>()
+        .map_err(|_| "Enter a valid IPv4 or IPv6 address".to_string())?;
+    let addr = SocketAddr::new(parsed_ip, port);
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(|e| format!("Could not connect: {e}"))?;
+    let cloned = state.inner().clone();
+    tokio::spawn(async move {
+        let _ = handle_connection(cloned, stream, true, addr).await;
+    });
+    Ok(())
+}
+
+fn schedule_reconnect(state: Arc<AppState>, peer_id: String, address: SocketAddr) {
+    if state.sessions.lock().unwrap().contains_key(&peer_id) {
+        state.reconnect_attempts.lock().unwrap().remove(&peer_id);
+        return;
+    }
+    let attempt = {
+        let mut attempts = state.reconnect_attempts.lock().unwrap();
+        let attempt = attempts.entry(peer_id.clone()).or_insert(0);
+        if *attempt >= 5 {
+            return;
+        }
+        let current = *attempt;
+        *attempt += 1;
+        current
+    };
+    if state
+        .connecting
+        .lock()
+        .unwrap()
+        .insert(peer_id.clone(), true)
+        .is_some()
+    {
+        return;
+    }
+    tokio::spawn(async move {
+        sleep(Duration::from_secs(
+            2u64.saturating_pow(attempt as u32).min(16),
+        ))
+        .await;
+        let result = match TcpStream::connect(address).await {
+            Ok(stream) => handle_connection(state.clone(), stream, true, address).await,
+            Err(error) => Err(error.to_string()),
+        };
+        if result.is_err() {
+            state.connecting.lock().unwrap().remove(&peer_id);
+            schedule_reconnect(state, peer_id, address);
+        }
+    });
+}
+#[tauri::command]
+async fn send_chat(
+    state: State<'_, Arc<AppState>>,
+    peer_id: String,
+    text: String,
+) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("Message is empty".into());
+    }
+    if text.chars().count() > 16_000 {
+        return Err("Message must be 16,000 characters or fewer".into());
+    }
+    let id = Uuid::new_v4();
+    let sent_at = now();
+    let tx = state
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&peer_id)
+        .map(|s| s.control_tx.clone())
+        .ok_or("Peer is not connected")?;
+    tx.send(Message::Chat {
+        id,
+        text: text.clone(),
+        sent_at,
+    })
+    .await
+    .map_err(|_| "Peer connection closed".to_string())?;
+    state
+        .db
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO chat_messages VALUES (?1,?2,'sent',?3,?4,'sent')",
+            rusqlite::params![id.to_string(), peer_id, text, sent_at],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(id.to_string())
+}
+#[tauri::command]
+async fn append_upload_chunk(
+    transfer_file_id: String,
+    name: String,
+    chunk_base64: String,
+    is_first: bool,
+    is_last: bool,
+) -> Result<Option<String>, String> {
+    use base64::Engine;
+    use tokio::io::AsyncWriteExt;
+    let cache_dir = storage::app_data_dir()?.join("outgoing_cache");
+    fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
+    let safe_name = Path::new(&name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("Invalid filename")?;
+    let transfer_dir = cache_dir.join(&transfer_file_id);
+    fs::create_dir_all(&transfer_dir).map_err(|e| e.to_string())?;
+    let file_path = transfer_dir.join(safe_name);
+
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&chunk_base64)
+        .map_err(|e| format!("Base64 decode failed: {e}"))?;
+
+    let mut file = if is_first {
+        tokio::fs::File::create(&file_path).await.map_err(|e| e.to_string())?
+    } else {
+        tokio::fs::OpenOptions::new()
+            .append(true)
+            .open(&file_path)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    file.write_all(&bytes).await.map_err(|e| e.to_string())?;
+    file.flush().await.map_err(|e| e.to_string())?;
+
+    if is_last {
+        Ok(Some(file_path.to_string_lossy().into_owned()))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+async fn send_files(
+    state: State<'_, Arc<AppState>>,
+    peer_id: String,
+    paths: Vec<String>,
+) -> Result<String, String> {
+    let id = Uuid::new_v4();
+    let (control_tx, data_tx) = state
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&peer_id)
+        .map(|s| (s.control_tx.clone(), s.data_tx.clone()))
+        .ok_or("Peer is not connected")?;
+    let (expanded, directories) = expanded_transfer_inputs(&paths)?;
+    let files = expanded
+        .iter()
+        .map(|(_, file)| file.clone())
+        .collect::<Vec<_>>();
+    let total = files
+        .iter()
+        .try_fold(0u64, |total, file| total.checked_add(file.size))
+        .ok_or("Transfer size overflow")?;
+    {
+        let mut active = state.active_transfer_peers.lock().unwrap();
+        if active.contains_key(&peer_id) {
+            return Err("A transfer with this device is already in progress".into());
+        }
+        active.insert(peer_id.clone(), id);
+    }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    state
+        .transfers
+        .lock()
+        .unwrap()
+        .insert(id, cancelled.clone());
+    let (accept_tx, accept_rx) = oneshot::channel();
+    state.pending_outgoing.lock().unwrap().insert(id, accept_tx);
+    let display_name = directories
+        .first()
+        .cloned()
+        .or_else(|| files.first().map(|file| file.name.clone()))
+        .unwrap_or_else(|| format!("{} file(s)", files.len()));
+    emit(
+        &state.app,
+        "transfer-progress",
+        TransferEvent {
+            peer_id: peer_id.clone(),
+            id: id.to_string(),
+            name: display_name,
+            size: total,
+            transferred: 0,
+            state: "waiting".into(),
+            direction: "sent".into(),
+        },
+    );
+    let app = state.app.clone();
+    let history_state = state.inner().clone();
+    let peer_for_task = peer_id.clone();
+    tokio::spawn(async move {
+        let result: Result<(), String> = async {
+            control_tx.send(Message::TransferRequest { id, files: files.clone(), directories, total_bytes: total }).await.map_err(|_| "Peer connection closed".to_string())?;
+            if !matches!(timeout(Duration::from_secs(300), accept_rx).await, Ok(Ok(true))) { return Err("Transfer was declined or timed out".into()); }
+            for (path, file) in expanded {
+                let mut hasher = Sha256::new();
+                let mut buffer = vec![0u8; 256 * 1024];
+                let mut input = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
+                loop { let read = input.read(&mut buffer).await.map_err(|e| e.to_string())?; if read == 0 { break; } hasher.update(&buffer[..read]); }
+                data_tx.send(Message::FileStart { transfer_id: id, file: file.clone(), hash: hex::encode(hasher.finalize()) }).await.map_err(|_| "Peer connection closed".to_string())?;
+                let mut input = tokio::fs::File::open(&path).await.map_err(|e| e.to_string())?;
+                let mut offset = 0u64;
+                loop {
+                    if cancelled.load(Ordering::Relaxed) {
+                        let _ = control_tx.send(Message::TransferCancel { id }).await;
+                        let display_name = if files.len() == 1 {
+                            files[0].name.clone()
+                        } else {
+                            format!("{} file(s)", files.len())
+                        };
+                        record_transfer_history(
+                            &history_state,
+                            &peer_for_task,
+                            &display_name,
+                            total,
+                            "sent",
+                            "cancelled",
+                            None,
+                        );
+                        emit(&app, "transfer-error", serde_json::json!({"peer_id": peer_for_task, "id": id.to_string(), "state": "cancelled", "message": "Transfer cancelled"}));
+                        return Ok(());
+                    }
+                    let read = input.read(&mut buffer).await.map_err(|e| e.to_string())?;
+                    if read == 0 { break; }
+                    data_tx.send(Message::FileChunk { transfer_id: id, file_id: file.id, offset, data: buffer[..read].to_vec() }).await.map_err(|_| "Peer connection closed".to_string())?;
+                    offset += read as u64;
+                    emit(&app, "transfer-progress", TransferEvent { peer_id: peer_for_task.clone(), id: id.to_string(), name: file.name.clone(), size: file.size, transferred: offset, state: "transferring".into(), direction: "sent".into() });
+                }
+                data_tx.send(Message::FileEnd { transfer_id: id, file_id: file.id }).await.map_err(|_| "Peer connection closed".to_string())?;
+                let history_name = file.relative_path.clone().unwrap_or_else(|| file.name.clone());
+                record_transfer_history(
+                    &history_state,
+                    &peer_for_task,
+                    &history_name,
+                    file.size,
+                    "sent",
+                    "completed",
+                    Some(&path),
+                );
+            }
+            control_tx.send(Message::TransferComplete { id }).await.map_err(|_| "Peer connection closed".to_string())?;
+            Ok(())
+        }.await;
+        history_state.pending_outgoing.lock().unwrap().remove(&id);
+        history_state.transfers.lock().unwrap().remove(&id);
+        history_state
+            .active_transfer_peers
+            .lock()
+            .unwrap()
+            .remove(&peer_for_task);
+        if let Err(message) = result {
+            let lower = message.to_ascii_lowercase();
+            let result_state = if cancelled.load(Ordering::Relaxed) || lower.contains("cancel") {
+                "cancelled"
+            } else if lower.contains("declined") || lower.contains("timed out") {
+                "rejected"
+            } else {
+                "failed"
+            };
+            let display_name = if files.len() == 1 {
+                files[0]
+                    .relative_path
+                    .clone()
+                    .unwrap_or_else(|| files[0].name.clone())
+            } else {
+                format!("{} file(s)", files.len())
+            };
+            record_transfer_history(
+                &history_state,
+                &peer_for_task,
+                &display_name,
+                total,
+                "sent",
+                result_state,
+                None,
+            );
+            emit(
+                &app,
+                "transfer-error",
+                serde_json::json!({"peer_id": peer_for_task, "id": id.to_string(), "state": result_state, "message": message}),
+            );
+        }
+    });
+    Ok(id.to_string())
+}
+#[tauri::command]
+fn cancel_transfer(state: State<'_, Arc<AppState>>, transfer_id: String) -> Result<(), String> {
+    let id = Uuid::parse_str(&transfer_id).map_err(|e| e.to_string())?;
+    if let Some(flag) = state.transfers.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+        if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+            let _ = waiter.send(false);
+        }
+        return Ok(());
+    }
+    if let Some(flag) = state.incoming_cancellations.lock().unwrap().get(&id) {
+        flag.store(true, Ordering::Relaxed);
+        return Ok(());
+    }
+    Err("Transfer not found".into())
+}
+
+fn private_addresses() -> Vec<String> {
+    let Ok(items) = local_ip_address::list_afinet_netifas() else {
+        return Vec::new();
+    };
+    let mut preferred = Vec::new();
+    let mut fallback = Vec::new();
+    for (name, ip) in items {
+        let lower = name.to_ascii_lowercase();
+        let excluded_interface = lower.contains("docker")
+            || lower.contains("veth")
+            || lower.contains("hyper-v")
+            || lower.contains("hyperv")
+            || lower.contains("wsl")
+            || lower.contains("vmware")
+            || lower.contains("virtualbox")
+            || lower.contains("virtual")
+            || lower.contains("vpn")
+            || lower.contains("loopback");
+        let preferred_interface = !excluded_interface
+            && (lower == "en0"
+                || lower == "en1"
+                || lower.contains("wifi")
+                || lower.contains("wi-fi")
+                || lower.contains("ethernet")
+                || lower.starts_with("eth"));
+        let value = match ip {
+            IpAddr::V4(v4) if v4.is_private() => Some(v4.to_string()),
+            IpAddr::V6(v6)
+                if !v6.is_loopback() && !v6.is_unspecified() && !v6.is_unicast_link_local() =>
+            {
+                Some(v6.to_string())
+            }
+            _ => None,
+        };
+        if let Some(value) = value {
+            if preferred_interface {
+                preferred.push(value);
+            } else {
+                fallback.push(value);
+            }
+        }
+    }
+    let mut addresses = if preferred.is_empty() {
+        fallback
+    } else {
+        preferred
+    };
+    // Most LAN users connect with an RFC1918 IPv4 address. Keep it first so
+    // the address shown in the UI is immediately useful for “Connect by IP”.
+    addresses.sort_by_key(|address| if address.contains(':') { 1 } else { 0 });
+    addresses
+}
+
+fn friendly_peer_name(name: &str, platform: &str) -> String {
+    let trimmed = name.trim();
+    if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("localhost") {
+        return trimmed.to_string();
+    }
+    match platform.to_ascii_lowercase().as_str() {
+        "android" => "Android device".into(),
+        "ios" => "iPhone or iPad".into(),
+        "macos" => "Mac".into(),
+        "windows" => "Windows PC".into(),
+        "linux" => "Linux computer".into(),
+        _ => "LAN device".into(),
+    }
+}
+
+fn display_socket(ip: IpAddr, port: u16) -> String {
+    SocketAddr::new(ip, port).to_string()
+}
+
+fn start_mdns(state: Arc<AppState>, port: u16) {
+    let Ok(mdns) = ServiceDaemon::new() else {
+        update_local_status(&state, |info| {
+            info.mdns_advertise = "failed".into();
+            info.mdns_browse = "failed".into();
+            info.mdns = "unavailable".into();
+        });
+        return;
+    };
+    *state.mdns.lock().unwrap() = Some(mdns.clone());
+    let addresses = private_addresses();
+    let service_type = "_localshare._tcp.local.";
+    let advertised_name = state.device_name.lock().unwrap().clone();
+    let props = [
+        ("protocol_version", PROTOCOL_VERSION.to_string()),
+        ("device_id", state.identity.device_id.to_string()),
+        ("device_name", advertised_name),
+        ("platform", std::env::consts::OS.to_string()),
+        ("fingerprint", state.identity.fingerprint.clone()),
+        ("capabilities", "chat,files,multi_file".to_string()),
+    ];
+    let host = format!("{}.local.", state.identity.device_id);
+    if !addresses.is_empty() {
+        let advertise_state = if let Ok(info) = ServiceInfo::new(
+            service_type,
+            &state.identity.device_id.to_string(),
+            &host,
+            addresses.as_slice(),
+            port,
+            props.as_slice(),
+        ) {
+            if mdns.register(info).is_ok() {
+                "active"
+            } else {
+                "failed"
+            }
+        } else {
+            "failed"
+        };
+        update_local_status(&state, |local| {
+            local.mdns_advertise = advertise_state.into();
+            local.mdns = "advertising + browsing".into();
+        });
+    } else {
+        update_local_status(&state, |local| {
+            local.mdns_advertise = "no private address".into();
+            local.mdns = "browsing only".into();
+        });
+    }
+    if let Ok(receiver) = mdns.browse(service_type) {
+        update_local_status(&state, |local| local.mdns_browse = "active".into());
+        std::thread::spawn(move || {
+            while let Ok(event) = receiver.recv() {
+                match event {
+                    ServiceEvent::ServiceResolved(info) => {
+                        let props = info.get_properties();
+                        let Some(id) = props
+                            .get_property_val_str("device_id")
+                            .map(ToString::to_string)
+                        else {
+                            continue;
+                        };
+                        if id == state.identity.device_id.to_string() {
+                            continue;
+                        }
+                        let raw_name = props
+                            .get_property_val_str("device_name")
+                            .unwrap_or("LAN device")
+                            .to_string();
+                        let fingerprint = props
+                            .get_property_val_str("fingerprint")
+                            .unwrap_or("")
+                            .to_string();
+                        let platform = props
+                            .get_property_val_str("platform")
+                            .unwrap_or("LAN")
+                            .to_string();
+                        let name = friendly_peer_name(&raw_name, &platform);
+                        let mut addrs: Vec<SocketAddr> = info
+                            .get_addresses()
+                            .iter()
+                            .map(|ip| SocketAddr::new(*ip, info.get_port()))
+                            .collect();
+                        addrs.sort_by_key(|a| if a.is_ipv4() { 0 } else { 1 });
+
+                        for addr in addrs {
+                            let peer_id = id.clone();
+                            let address = addr.to_string();
+                            {
+                                let db = state.db.lock().unwrap();
+                                let _ = storage::trust_peer(&db, &peer_id, &name, &fingerprint, now());
+                            }
+                            let is_connected = state.sessions.lock().unwrap().contains_key(&peer_id);
+                            let peer = Peer {
+                                id: peer_id.clone(),
+                                name: name.clone(),
+                                address: address.clone(),
+                                fingerprint: fingerprint.clone(),
+                                state: if is_connected {
+                                    "connected"
+                                } else {
+                                    "connecting"
+                                }
+                                .into(),
+                                platform: platform.clone(),
+                                trusted: true,
+                            };
+                            state
+                                .peers
+                                .lock()
+                                .unwrap()
+                                .insert(peer_id.clone(), peer.clone());
+                            emit(&state.app, "peer-updated", peer.clone());
+                            let should_connect = !is_connected
+                                && state
+                                    .connecting
+                                    .lock()
+                                    .unwrap()
+                                    .insert(peer_id.clone(), true)
+                                    .is_none();
+                            if should_connect {
+                                let connect_state = state.clone();
+                                let connect_id = peer_id.clone();
+                                std::thread::spawn(move || {
+                                    let runtime = tokio::runtime::Builder::new_current_thread()
+                                        .enable_all()
+                                        .build();
+                                    if let Ok(runtime) = runtime {
+                                        let cleanup_state = connect_state.clone();
+                                        let task_state = connect_state.clone();
+                                        let result = runtime.block_on(async move {
+                                            let stream = TcpStream::connect(addr)
+                                                .await
+                                                .map_err(|e| e.to_string())?;
+                                            handle_connection(task_state, stream, true, addr).await
+                                        });
+                                        if result.is_err() {
+                                            cleanup_state
+                                                .connecting
+                                                .lock()
+                                                .unwrap()
+                                                .remove(&connect_id);
+                                        }
+                                    } else {
+                                        connect_state
+                                            .connecting
+                                            .lock()
+                                            .unwrap()
+                                            .remove(&connect_id);
+                                    }
+                                });
+                                break;
+                            }
+                        }
+                    }
+                    ServiceEvent::ServiceRemoved(_, fullname) => {
+                        if let Some(id) = fullname.split('.').next() {
+                            if state.peers.lock().unwrap().remove(id).is_some() {
+                                let _ = state.app.emit("peer-removed", id);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+    } else {
+        update_local_status(&state, |local| {
+            local.mdns_browse = "failed".into();
+            if local.mdns_advertise == "active" {
+                local.mdns = "advertising only".into();
+            }
+        });
+    }
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    install_crypto_provider();
+    tracing_subscriber::fmt()
+        .with_env_filter("localshare=info")
+        .init();
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_process::init());
+    builder
+        .setup(|app| {
+            storage::configure(app.handle())?;
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+            let data = storage::app_data_dir()?;
+            let db = storage::open().map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            let name = storage::setting(&db, "device_name");
+            let identity = identity::load_or_create(&data, name)
+                .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            let updater_enabled = cfg!(desktop)
+                && storage::setting(&db, "check_for_updates")
+                    .map(|value| value != "false")
+                    .unwrap_or(true);
+            let receive_directory = storage::default_download_dir()
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "Unavailable".into());
+            let (tls_server, _) =
+                tls_configs(&identity).map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+            let app_handle = app.handle().clone();
+            let std_listener = {
+                let socket = socket2::Socket::new(
+                    socket2::Domain::IPV4,
+                    socket2::Type::STREAM,
+                    Some(socket2::Protocol::TCP),
+                )
+                .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+                let _ = socket.set_reuse_address(true);
+                #[cfg(all(unix, not(target_os = "solaris")))]
+                let _ = socket.set_reuse_port(true);
+                let addr: SocketAddr = "0.0.0.0:32123".parse().unwrap();
+                if socket.bind(&addr.into()).is_ok() {
+                    let _ = socket.listen(128);
+                    let l: std::net::TcpListener = socket.into();
+                    l.set_nonblocking(true)?;
+                    l
+                } else {
+                    let fallback_socket = socket2::Socket::new(
+                        socket2::Domain::IPV4,
+                        socket2::Type::STREAM,
+                        Some(socket2::Protocol::TCP),
+                    )
+                    .map_err(|e| Box::<dyn std::error::Error>::from(e))?;
+                    let _ = fallback_socket.set_reuse_address(true);
+                    let addr_zero: SocketAddr = "0.0.0.0:0".parse().unwrap();
+                    let _ = fallback_socket.bind(&addr_zero.into());
+                    let _ = fallback_socket.listen(128);
+                    let l: std::net::TcpListener = fallback_socket.into();
+                    l.set_nonblocking(true)?;
+                    l
+                }
+            };
+            let port = std_listener.local_addr()?.port();
+            let state = Arc::new(AppState {
+                identity: identity.clone(),
+                device_name: Mutex::new(identity.device_name.clone()),
+                db: Mutex::new(db),
+                peers: Mutex::new(HashMap::new()),
+                sessions: Mutex::new(HashMap::new()),
+                transfers: Mutex::new(HashMap::new()),
+                active_transfer_peers: Mutex::new(HashMap::new()),
+                incoming_cancellations: Mutex::new(HashMap::new()),
+                pending_incoming: Mutex::new(HashMap::new()),
+                pending_outgoing: Mutex::new(HashMap::new()),
+                connecting: Mutex::new(HashMap::new()),
+                reconnect_attempts: Mutex::new(HashMap::new()),
+                mdns: Mutex::new(None),
+                local: Mutex::new(LocalInfo {
+                    version: env!("CARGO_PKG_VERSION").into(),
+                    device_id: identity.device_id.to_string(),
+                    device_name: identity.device_name.clone(),
+                    platform: std::env::consts::OS.into(),
+                    architecture: std::env::consts::ARCH.into(),
+                    fingerprint: identity.fingerprint.clone(),
+                    port,
+                    addresses: private_addresses(),
+                    mdns: "advertising + browsing".into(),
+                    mdns_advertise: "starting".into(),
+                    mdns_browse: "starting".into(),
+                    listener_state: "starting".into(),
+                    tls_state: "configured".into(),
+                    database_state: "healthy".into(),
+                    receive_directory,
+                    updater: if updater_enabled {
+                        "enabled · Internet only".into()
+                    } else {
+                        "disabled".into()
+                    },
+                    transport: "TLS 1.3 / direct LAN TCP".into(),
+                }),
+                tls_server,
+                app: app_handle.clone(),
+            });
+            app.manage(state.clone());
+            start_mdns(state.clone(), port);
+            tauri::async_runtime::spawn(async move {
+                let listener = match tokio::net::TcpListener::from_std(std_listener) {
+                    Ok(l) => l,
+                    Err(_) => {
+                        update_local_status(&state, |local| local.listener_state = "failed".into());
+                        return;
+                    }
+                };
+                update_local_status(&state, |local| local.listener_state = "active".into());
+                while let Ok((stream, addr)) = listener.accept().await {
+                    let state = state.clone();
+                    tokio::spawn(async move {
+                        let _ = handle_connection(state, stream, false, addr).await;
+                    });
+                }
+                update_local_status(&state, |local| local.listener_state = "stopped".into());
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            local_info,
+            list_peers,
+            chat_history,
+            transfer_history,
+            known_peers,
+            clear_transfer_history,
+            settings,
+            save_settings,
+            open_location,
+            open_file,
+            open_folder,
+            accept_transfer,
+            reject_transfer,
+            trust_peer,
+            connect_manual,
+            send_chat,
+            send_files,
+            append_upload_chunk,
+            cancel_transfer
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running LocalShare");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        let root = std::env::var("LOCALSHARE_TEST_ROOT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(".localshare-test-work/unit"));
+        root.join(format!("{}-{}", name, Uuid::new_v4()))
+    }
+
+    #[test]
+    fn replaces_unhelpful_peer_names_with_platform_name() {
+        assert_eq!(friendly_peer_name("localhost", "android"), "Android device");
+        assert_eq!(friendly_peer_name("  ", "windows"), "Windows PC");
+        assert_eq!(
+            friendly_peer_name("Harsh's phone", "android"),
+            "Harsh's phone"
+        );
+    }
+
+    #[test]
+    fn receive_paths_stay_inside_root() {
+        let root = test_root("paths");
+        fs::create_dir_all(&root).unwrap();
+        assert!(safe_receive_path(&root, "Project/docs/report.pdf").is_ok());
+        for path in ["../outside.txt", "/tmp/outside.txt", "C:/Windows/x"] {
+            assert!(safe_receive_path(&root, path).is_err(), "accepted {path}");
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_names_are_deterministic() {
+        let root = test_root("duplicates");
+        fs::create_dir_all(&root).unwrap();
+        let original = root.join("photo.txt");
+        fs::write(&original, b"one").unwrap();
+        fs::write(root.join("photo (1).txt"), b"two").unwrap();
+        assert_eq!(
+            unique_path_for_relative(&root, &original).unwrap(),
+            root.join("photo (2).txt")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_expansion_preserves_nested_and_empty_directories() {
+        let root = test_root("folder");
+        let folder = root.join("Project");
+        fs::create_dir_all(folder.join("nested/empty")).unwrap();
+        fs::write(folder.join("nested/hello world.txt"), b"hello").unwrap();
+        let (files, directories) =
+            expanded_transfer_inputs(&[folder.to_string_lossy().into_owned()]).unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(directories.iter().any(|path| path == "Project"));
+        assert!(directories
+            .iter()
+            .any(|path| path == "Project/nested/empty"));
+        assert_eq!(
+            files[0].1.relative_path.as_deref(),
+            Some("Project/nested/hello world.txt")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}

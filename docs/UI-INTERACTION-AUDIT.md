@@ -1,6 +1,6 @@
 # LocalShare UI interaction audit
 
-Audit date: 2026-08-14. This records source-level wiring plus direct inspection of the rebuilt packaged macOS GUI; a physical two-computer interaction session remains separate and is not claimed here.
+Audit date: 2026-08-14; usability pass updated 2026-09-06. This records source-level wiring plus direct inspection of the rebuilt packaged macOS GUI and browser-based accessibility/layout checks; a physical two-computer interaction session remains separate and is not claimed here.
 
 | Control | Result | Implementation/evidence |
 | --- | --- | --- |
@@ -28,6 +28,12 @@ Audit date: 2026-08-14. This records source-level wiring plus direct inspection 
 | Accept/reject incoming transfer | PASS source wiring | `transfer-request` opens a modal; `accept_transfer`/`reject_transfer` resolve the real protocol decision |
 | Trust new device | PASS source wiring | fingerprint prompt, persisted trust, identity-change rejection |
 | Check for updates | PASS source wiring | signed Tauri updater check is Internet-only and failure is non-fatal |
+| First-run guidance | PASS | Empty Nearby state gives a three-step same-network and fingerprint checklist plus IP fallback |
+| Offline conversations | PASS source wiring | Saved chat remains discoverable through persisted trusted-device names when a peer is offline |
+| Desktop notifications | PASS source wiring | Official Tauri notification plugin is permission-gated and only notifies for completed receives |
+| Validation and feedback | PASS | Device name, message length, IPv4/IPv6, and port validation have inline/friendly feedback and busy states |
+| Keyboard/accessibility | PASS source/browser inspection | Semantic labels, focus-visible states, live notices, dialog roles, Escape close, reduced-motion support, and Enter/Shift+Enter composer behavior |
+| Narrow desktop window | PASS browser inspection | The two-column sharing workspace becomes one column before the configured 900 px minimum window width |
 | More/actions menu | REMOVED | it was previously a dead visible button |
 
 Windows note: this audit is source-level plus packaged macOS inspection. No Windows executable or installer exists on this host, so Windows GUI controls are NOT VERIFIED.

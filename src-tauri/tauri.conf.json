@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "identifier": "com.localshare.desktop",
   "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
-  "app": { "windows": [{ "title": "LocalShare", "width": 1180, "height": 780, "minWidth": 900, "minHeight": 620, "resizable": true }], "security": { "csp": null } },
-  "bundle": { "active": true, "targets": ["app", "dmg", "msi", "nsis"], "createUpdaterArtifacts": true, "macOS": { "minimumSystemVersion": "11.0" }, "windows": { "webviewInstallMode": { "type": "offlineInstaller" } } },
+  "app": { "windows": [{ "title": "LocalShare", "width": 1180, "height": 780, "minWidth": 900, "minHeight": 620, "resizable": true, "devtools": true }], "security": { "csp": null } },
+  "bundle": { "active": true, "targets": ["app", "dmg", "msi", "nsis"], "createUpdaterArtifacts": false, "macOS": { "minimumSystemVersion": "11.0" }, "windows": { "webviewInstallMode": { "type": "offlineInstaller" } } },
   "plugins": { "updater": { "endpoints": ["https://github.com/harsh2715/LocalShare/releases/latest/download/latest.json"], "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERBQzQ4REU5N0MwQkRCOTEKUldTUjJ3dDg2WTNFMnRQOGwvYkpZVDlONTlGbE1Qc1BTSytIZVpNMzVQU2FvdEJBRjhSYUdrOHcK", "windows": { "installMode": "passive" } } }
 }
