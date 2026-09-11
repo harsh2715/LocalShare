@@ -16,7 +16,8 @@ fi
 # generated app directory. Remove only this generated bundle, never sources.
 BUNDLE_DIR="src-tauri/target/release/bundle/macos"
 APP_DIR="$BUNDLE_DIR/LocalShare.app"
-DMG_PATH="$BUNDLE_DIR/LocalShare_0.1.0_$(rustc -vV | awk '/host:/ {print $2}' | sed 's/-apple-darwin//').dmg"
+APP_VERSION="$(awk -F'"' '/"version"/ {print $4; exit}' src-tauri/tauri.conf.json)"
+DMG_PATH="$BUNDLE_DIR/LocalShare_${APP_VERSION}_$(rustc -vV | awk '/host:/ {print $2}' | sed 's/-apple-darwin//').dmg"
 rm -rf "$APP_DIR"
 rm -f "$BUNDLE_DIR"/rw.*.dmg "$DMG_PATH"
 rm -f "src-tauri/target/release/two_node"

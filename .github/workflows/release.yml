@@ -49,10 +49,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           Copy-Item release\windows\LocalShare-Setup.exe release-assets\
+          $signature = Get-ChildItem src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis -Filter '*.sig' -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+          if (-not $signature) { throw 'The signed Windows updater signature was not emitted.' }
+          Copy-Item $signature.FullName release-assets\LocalShare-Setup.exe.sig
           Copy-Item release\windows\SHA256SUMS.txt release-assets\
-          Get-ChildItem src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis -File |
-            Where-Object { $_.Name -match '\.(nsis\.zip|sig)$' } |
-            Copy-Item -Destination release-assets\
       - uses: actions/upload-artifact@v4
         with:
           name: signed-windows-assets
@@ -119,11 +121,11 @@ jobs:
           test -s release-assets/LocalShare-android-aarch64-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: android-validation-apk
+          name: signed-android-assets
           path: release-assets/LocalShare-android-aarch64-debug.apk
 
   publish:
-    needs: [windows, macos]
+    needs: [windows, macos, android-validation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

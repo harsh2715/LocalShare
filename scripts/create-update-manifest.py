@@ -22,7 +22,9 @@ def one(suffix: str) -> Path:
     return matches[0]
 
 
-windows = one(".nsis.zip")
+windows = assets.get("LocalShare-Setup.exe")
+if windows is None:
+    windows = one("-setup.exe")
 windows_sig = assets.get(windows.name + ".sig")
 macos = one(".app.tar.gz")
 macos_sig = assets.get(macos.name + ".sig")
