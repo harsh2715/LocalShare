@@ -1,0 +1,8 @@
+{
+  "stage": 1,
+  "status": "BLOCKED",
+  "reason": "Mac locked; renderer inspection unavailable",
+  "deviceA": {"address":"127.0.0.1","port":33201,"profile":"device-a/user-data"},
+  "deviceB": {"address":"127.0.0.1","port":33202,"profile":"device-b/user-data"},
+  "laterStagesRun": false
+}
