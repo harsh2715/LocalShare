@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "localshare"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "dirs",
  "ed25519-dalek",
