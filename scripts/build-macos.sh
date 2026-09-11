@@ -32,6 +32,17 @@ npm run tauri build -- --bundles app
 rm -f "$APP_DIR/Contents/MacOS/two_node"
 test -x "$APP_DIR/Contents/MacOS/localshare"
 test ! -e "$APP_DIR/Contents/MacOS/two_node"
+
+# Tauri's linker signature is not a valid app-bundle signature. Without a
+# complete bundle seal, macOS Gatekeeper reports a downloaded DMG app as
+# damaged. Use the available Developer ID identity when CI provides one;
+# otherwise create a complete ad-hoc seal so the bundle is internally valid.
+if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
+  codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$APP_DIR"
+else
+  codesign --force --deep --sign - "$APP_DIR"
+fi
+codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 hdiutil create -volname LocalShare -srcfolder "$APP_DIR" -ov -format UDZO "$DMG_PATH" >/dev/null
 echo "Built application: $APP_DIR"
 echo "Built disk image: $DMG_PATH"

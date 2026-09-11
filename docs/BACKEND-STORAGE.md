@@ -39,10 +39,10 @@ peer availability, progress events, and in-memory cancellation flags do not.
 
 ## Other runtime state
 
-- The Ed25519 signing identity is persisted in the OS keychain where
-  available. If the keychain is unavailable, `device-key.pk8` is created with
-  restrictive permissions and is never stored in SQLite. The same identity
-  signs the application handshake and the self-signed TLS certificate.
+- The Ed25519 signing identity is persisted as `device-key.pk8` in the app's
+  private data directory with restrictive permissions and is never stored in
+  SQLite. The same identity signs the application handshake and the
+  self-signed TLS certificate.
 - Transfer cancellation flags, pending approval channels, active peer
   sessions, mDNS daemon state, and reconnect attempts are process memory only.
 - There is no application log file or telemetry database. The Rust tracing

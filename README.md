@@ -35,7 +35,7 @@ For a development window, install the Tauri CLI and run `npm run tauri dev`. Pac
 
 Backend state is stored under the platform application-data directory in
 `LocalShare/localshare.sqlite` plus the persistent `device-id` and Ed25519
-identity (OS keychain where available, protected PKCS#8 fallback otherwise).
+identity in the app's private data directory with protected PKCS#8 storage.
 Received files
 are separate user data in `Downloads/LocalShare` by default. See
 `docs/BACKEND-STORAGE.md` for the exact platform paths and persistence rules.

@@ -148,6 +148,7 @@ struct AppState {
     reconnect_attempts: Mutex<HashMap<String, u8>>,
     mdns: Mutex<Option<ServiceDaemon>>,
     local: Mutex<LocalInfo>,
+    default_download_dir: PathBuf,
     tls_server: Arc<ServerConfig>,
     app: AppHandle,
 }
@@ -179,6 +180,38 @@ fn now() -> i64 {
 }
 fn emit<T: Serialize + Clone>(app: &AppHandle, name: &str, payload: T) {
     let _ = app.emit(name, payload);
+}
+
+fn application_data_dir(_app: &AppHandle) -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        _app.path()
+            .app_local_data_dir()
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        dirs::data_local_dir()
+            .map(|path| path.join("LocalShare"))
+            .ok_or_else(|| "Unable to locate application data directory".into())
+    }
+}
+
+fn default_download_dir(_app: &AppHandle, data_dir: &Path) -> Result<PathBuf, String> {
+    #[cfg(target_os = "android")]
+    {
+        Ok(_app
+            .path()
+            .download_dir()
+            .unwrap_or_else(|_| data_dir.join("Downloads"))
+            .join("LocalShare"))
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        Ok(dirs::download_dir()
+            .unwrap_or_else(|| data_dir.join("Downloads"))
+            .join("LocalShare"))
+    }
 }
 
 fn update_local_status(state: &Arc<AppState>, update: impl FnOnce(&mut LocalInfo)) {
@@ -1270,7 +1303,7 @@ fn download_dir(state: &AppState) -> Result<PathBuf, String> {
     let dir = configured
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or(storage::default_download_dir()?);
+        .unwrap_or_else(|| state.default_download_dir.clone());
     if !dir.is_absolute() {
         return Err("Receive directory must be an absolute path".into());
     }
@@ -1401,11 +1434,8 @@ fn clear_transfer_history(state: State<'_, Arc<AppState>>) -> Result<(), String>
 #[tauri::command]
 fn settings(state: State<'_, Arc<AppState>>) -> Result<SettingsInfo, String> {
     let db = state.db.lock().unwrap();
-    let download = storage::setting(&db, "download_location").unwrap_or_else(|| {
-        storage::default_download_dir()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    });
+    let download = storage::setting(&db, "download_location")
+        .unwrap_or_else(|| state.default_download_dir.to_string_lossy().into_owned());
     Ok(SettingsInfo {
         device_name: storage::setting(&db, "device_name")
             .unwrap_or_else(|| state.device_name.lock().unwrap().clone()),
@@ -1441,9 +1471,7 @@ fn save_settings(
     *state.device_name.lock().unwrap() = device_name.trim().to_string();
     state.local.lock().unwrap().device_name = device_name.trim().to_string();
     let destination = if download_location.trim().is_empty() {
-        storage::default_download_dir()?
-            .to_string_lossy()
-            .into_owned()
+        state.default_download_dir.to_string_lossy().into_owned()
     } else {
         let path = PathBuf::from(download_location.trim());
         if !path.is_absolute() {
@@ -2182,8 +2210,12 @@ pub fn run() {
             #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
-            let data = storage::app_data_dir()?;
-            let db = storage::open().map_err(Box::<dyn std::error::Error>::from)?;
+            let data =
+                application_data_dir(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+            let default_download_dir = default_download_dir(app.handle(), &data)
+                .map_err(Box::<dyn std::error::Error>::from)?;
+            let db = storage::open(&data, &default_download_dir)
+                .map_err(Box::<dyn std::error::Error>::from)?;
             let name = storage::setting(&db, "device_name");
             let identity = identity::load_or_create(&data, name)
                 .map_err(Box::<dyn std::error::Error>::from)?;
@@ -2194,9 +2226,7 @@ pub fn run() {
             )) && storage::setting(&db, "check_for_updates")
                 .map(|value| value != "false")
                 .unwrap_or(true);
-            let receive_directory = storage::default_download_dir()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| "Unavailable".into());
+            let receive_directory = default_download_dir.to_string_lossy().into_owned();
             let (tls_server, _) =
                 tls_configs(&identity).map_err(Box::<dyn std::error::Error>::from)?;
             let app_handle = app.handle().clone();
@@ -2245,6 +2275,7 @@ pub fn run() {
                     },
                     transport: "TLS 1.3 / direct LAN TCP".into(),
                 }),
+                default_download_dir,
                 tls_server,
                 app: app_handle.clone(),
             });

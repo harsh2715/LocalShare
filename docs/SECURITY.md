@@ -7,7 +7,7 @@
 - Receiver filenames are basenames only; separators, NUL, `.` and `..` are rejected.
 - Network frames and metadata have explicit bounds.
 - Private file contents and chat text are not logged by the current code.
-- A persistent device UUID is created under LocalShare application data. A persistent Ed25519 public key is advertised by its SHA-256 fingerprint; the private key is stored in the OS keychain or a protected PKCS#8 fallback file.
+- A persistent device UUID is created under LocalShare application data. A persistent Ed25519 public key is advertised by its SHA-256 fingerprint; the private key is stored in a protected PKCS#8 file in the app's private data directory.
 
 ## Identity and trust
 
