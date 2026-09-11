@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::{fs, io::Write, path::Path};
 use uuid::Uuid;
 
-const KEYRING_SERVICE: &str = "com.localshare.desktop.identity";
 const FALLBACK_KEY_FILE: &str = "device-key.pk8";
 
 #[derive(Clone)]
@@ -24,6 +23,16 @@ fn decode_key(bytes: &[u8]) -> Result<SigningKey, String> {
 
 fn fallback_key_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(FALLBACK_KEY_FILE)
+}
+
+fn protect_file(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Unable to protect device identity: {e}"))?;
+    }
+    Ok(())
 }
 
 fn read_fallback_key(data_dir: &Path) -> Result<Option<SigningKey>, String> {
@@ -52,37 +61,15 @@ fn write_fallback_key(data_dir: &Path, key: &SigningKey) -> Result<SigningKey, S
         }
         Err(error) => return Err(format!("Unable to persist device identity: {error}")),
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("Unable to protect device identity: {e}"))?;
-    }
     file.write_all(document.as_bytes())
         .map_err(|e| format!("Unable to persist device identity: {e}"))?;
     file.sync_all()
         .map_err(|e| format!("Unable to persist device identity: {e}"))?;
+    protect_file(&path)?;
     Ok(key.clone())
 }
 
-fn load_or_create_signing_key(data_dir: &Path, device_id: Uuid) -> Result<SigningKey, String> {
-    let username = device_id.to_string();
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &username) {
-        if let Ok(bytes) = entry.get_secret() {
-            return decode_key(&bytes);
-        }
-        if let Some(key) = read_fallback_key(data_dir)? {
-            return Ok(key);
-        }
-        let key = SigningKey::generate(&mut OsRng);
-        let document = key
-            .to_pkcs8_der()
-            .map_err(|e| format!("Unable to encode device identity: {e}"))?;
-        if entry.set_secret(document.as_bytes()).is_ok() {
-            return Ok(key);
-        }
-        return write_fallback_key(data_dir, &key);
-    }
+fn load_or_create_signing_key(data_dir: &Path) -> Result<SigningKey, String> {
     if let Some(key) = read_fallback_key(data_dir)? {
         return Ok(key);
     }
@@ -107,11 +94,13 @@ pub fn load_or_create(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let id = Uuid::new_v4();
             fs::write(&path, id.to_string()).map_err(|e| e.to_string())?;
+            protect_file(&path)?;
             id
         }
         Err(error) => return Err(format!("Unable to read device ID: {error}")),
     };
-    let signing_key = load_or_create_signing_key(data_dir, device_id)?;
+    protect_file(&path)?;
+    let signing_key = load_or_create_signing_key(data_dir)?;
     let fingerprint = public_key_fingerprint(&signing_key.verifying_key().to_bytes());
     let device_name = configured_name
         .filter(|s| !s.trim().is_empty())
