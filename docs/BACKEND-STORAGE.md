@@ -11,6 +11,7 @@ uses the source repository as a production data directory.
 | SQLite and identity | `~/Library/Application Support/LocalShare/` | `%LOCALAPPDATA%\\LocalShare\\` |
 | Database | `localshare.sqlite` in that directory | `localshare.sqlite` in that directory |
 | Device identity | `device-id` in that directory | `device-id` in that directory |
+| Signing identity | OS keychain; protected `device-key.pk8` fallback | OS credential store; protected `device-key.pk8` fallback |
 | Received files | `~/Downloads/LocalShare/` by default | `%USERPROFILE%\\Downloads\\LocalShare\\` by default |
 | Partial incoming files | beside the final destination as `*.localshare-part` | beside the final destination as `*.localshare-part` |
 
@@ -38,10 +39,10 @@ peer availability, progress events, and in-memory cancellation flags do not.
 
 ## Other runtime state
 
-- TLS certificate material is generated in process memory by `tls_configs()`;
-  there is no persistent TLS private-key file and no plaintext private-key
-  fallback. The current V1 therefore has fingerprint trust, but not a
-  persisted certificate key.
+- The Ed25519 signing identity is persisted in the OS keychain where
+  available. If the keychain is unavailable, `device-key.pk8` is created with
+  restrictive permissions and is never stored in SQLite. The same identity
+  signs the application handshake and the self-signed TLS certificate.
 - Transfer cancellation flags, pending approval channels, active peer
   sessions, mDNS daemon state, and reconnect attempts are process memory only.
 - There is no application log file or telemetry database. The Rust tracing
@@ -56,7 +57,7 @@ peer availability, progress events, and in-memory cancellation flags do not.
 ## Filesystem and cleanup
 
 Received files are written to a temporary `filename.ext.localshare-part` name, streamed in
-bounded chunks, hashed with SHA-256, and renamed to the final collision-safe
+bounded chunks, hashed with SHA-256, and committed to the final collision-safe
 name only after size and hash verification. Existing names become, for
 example, `report.pdf`, `report (1).pdf`, and `report (2).pdf`.
 
@@ -68,11 +69,10 @@ files are intentionally separate from the application database.
 
 ## Security boundary
 
-TLS protects the direct LAN session. The persistent `device-id` and pinned
-fingerprints are not private keys. The current certificate key is generated
-for the process, while the peer fingerprint is persisted and checked before a
-trusted session is accepted. Private key material is not printed or stored in
-SQLite. The updater signing private key is not application data and is kept
+TLS protects the direct LAN session. The peer public-key fingerprint is
+persisted and checked before a trusted session is accepted, while signed
+nonces prevent replaying a stale handshake. Private key material is not
+printed or stored in SQLite. The updater signing private key is not application data and is kept
 outside Git in the ignored project-only `.localshare-private/` directory/CI
 secret.
 

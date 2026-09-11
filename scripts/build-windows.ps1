@@ -79,8 +79,8 @@ if (-not $SkipRustChecks) {
     Push-Location $TauriRoot
     try {
         Write-Host 'Running Rust checks...'
-        cargo check --all-targets
-        cargo test --all-targets
+        cargo check --locked --all-targets
+        cargo test --locked --all-targets
     }
     finally {
         Pop-Location
@@ -92,7 +92,14 @@ Write-Host 'Building the production Tauri Windows bundles...'
 # default localshare binary only; the validation below rejects test binaries in
 # the bundle if a stale or misconfigured build ever includes one.
 $bundles = if ($BuildMsi) { 'nsis,msi' } else { 'nsis' }
-npm run tauri build -- --target $WindowsTarget --bundles $bundles
+$tauriArgs = @('--target', $WindowsTarget, '--bundles', $bundles)
+if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+    # Main-branch builds must not receive release signing credentials. Tauri
+    # still produces a normal installer, but does not attempt updater artifacts.
+    $tauriArgs += @('--config', '{"bundle":{"createUpdaterArtifacts":false}}')
+}
+& npm run tauri build -- @tauriArgs
+if ($LASTEXITCODE -ne 0) { throw "Tauri build failed with exit code $LASTEXITCODE" }
 
 $productionExe = Join-Path $TargetRelease 'localshare.exe'
 if (-not (Test-Path $productionExe)) {

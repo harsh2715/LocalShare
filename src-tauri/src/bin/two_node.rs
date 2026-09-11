@@ -1,5 +1,7 @@
 //! Real protocol integration harness using two isolated TLS endpoints.
+use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
 use localshare::protocol::{self, FileMeta, Message, MAX_FRAME_BYTES, PROTOCOL_VERSION};
+use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
@@ -91,15 +93,86 @@ fn configs() -> (std::sync::Arc<ServerConfig>, std::sync::Arc<ClientConfig>) {
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
         cert.key_pair.serialize_der(),
     ));
-    let server = ServerConfig::builder()
+    let server = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key)
         .unwrap();
-    let client = ClientConfig::builder()
+    let client = ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
         .dangerous()
         .with_custom_certificate_verifier(std::sync::Arc::new(NoVerifier))
         .with_no_client_auth();
     (std::sync::Arc::new(server), std::sync::Arc::new(client))
+}
+
+fn fingerprint(key: &ed25519_dalek::SigningKey) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key.verifying_key().to_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn make_hello(
+    id: Uuid,
+    name: &str,
+    key: &ed25519_dalek::SigningKey,
+    port: u16,
+    nonce: &[u8],
+) -> Message {
+    let public_key = key.verifying_key().to_bytes().to_vec();
+    let capabilities = vec!["chat".into(), "files".into(), "multi_file".into()];
+    let signing_bytes = protocol::hello_signing_bytes(
+        PROTOCOL_VERSION,
+        id,
+        name,
+        &fingerprint(key),
+        &public_key,
+        port,
+        nonce,
+        &capabilities,
+    );
+    Message::Hello {
+        protocol_version: PROTOCOL_VERSION,
+        device_id: id,
+        device_name: name.into(),
+        fingerprint: fingerprint(key),
+        public_key,
+        listening_port: port,
+        nonce: nonce.to_vec(),
+        signature: key.sign(&signing_bytes).to_bytes().to_vec(),
+        capabilities,
+    }
+}
+
+fn verify_hello(message: Message) -> Result<(Uuid, Vec<u8>, Vec<u8>), String> {
+    let Message::Hello {
+        protocol_version,
+        device_id,
+        device_name,
+        fingerprint,
+        public_key,
+        listening_port,
+        nonce,
+        signature,
+        capabilities,
+    } = message
+    else {
+        return Err("expected hello".into());
+    };
+    let key_bytes: [u8; 32] = public_key.as_slice().try_into().map_err(|_| "bad key")?;
+    let key = VerifyingKey::from_bytes(&key_bytes).map_err(|_| "bad key")?;
+    let bytes = protocol::hello_signing_bytes(
+        protocol_version,
+        device_id,
+        &device_name,
+        &fingerprint,
+        &public_key,
+        listening_port,
+        &nonce,
+        &capabilities,
+    );
+    let signature = Signature::from_slice(&signature).map_err(|_| "bad signature")?;
+    key.verify(&bytes, &signature)
+        .map_err(|_| "bad signature")?;
+    Ok((device_id, public_key, nonce))
 }
 
 fn hash(path: &Path) -> String {
@@ -166,32 +239,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (mut br, mut bw) = accept.await?;
     let a_id = Uuid::new_v4();
     let b_id = Uuid::new_v4();
+    let a_key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+    let b_key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+    let mut a_nonce = vec![0u8; 32];
+    let mut b_nonce = vec![0u8; 32];
+    OsRng.fill_bytes(&mut a_nonce);
+    OsRng.fill_bytes(&mut b_nonce);
     write_msg(
         &mut aw,
-        &Message::Hello {
+        &make_hello(a_id, "node-a", &a_key, addr.port(), &a_nonce),
+    )
+    .await?;
+    write_msg(
+        &mut bw,
+        &make_hello(b_id, "node-b", &b_key, addr.port(), &b_nonce),
+    )
+    .await?;
+    let (received_a_id, received_a_key, received_a_nonce) = verify_hello(read_msg(&mut br).await?)?;
+    let (received_b_id, received_b_key, received_b_nonce) = verify_hello(read_msg(&mut ar).await?)?;
+    assert_eq!(received_a_id, a_id);
+    assert_eq!(received_b_id, b_id);
+    assert_eq!(received_a_nonce, a_nonce);
+    assert_eq!(received_b_nonce, b_nonce);
+    write_msg(
+        &mut aw,
+        &Message::HelloAck {
             protocol_version: PROTOCOL_VERSION,
             device_id: a_id,
-            device_name: "node-a".into(),
-            fingerprint: "a".into(),
+            public_key: a_key.verifying_key().to_bytes().to_vec(),
+            signature: a_key
+                .sign(&protocol::ack_signing_bytes(
+                    PROTOCOL_VERSION,
+                    b_id,
+                    &b_nonce,
+                    a_id,
+                    &a_nonce,
+                ))
+                .to_bytes()
+                .to_vec(),
         },
     )
     .await?;
     write_msg(
         &mut bw,
-        &Message::Hello {
+        &Message::HelloAck {
             protocol_version: PROTOCOL_VERSION,
             device_id: b_id,
-            device_name: "node-b".into(),
-            fingerprint: "b".into(),
+            public_key: b_key.verifying_key().to_bytes().to_vec(),
+            signature: b_key
+                .sign(&protocol::ack_signing_bytes(
+                    PROTOCOL_VERSION,
+                    a_id,
+                    &a_nonce,
+                    b_id,
+                    &b_nonce,
+                ))
+                .to_bytes()
+                .to_vec(),
         },
     )
     .await?;
     assert!(
-        matches!(read_msg(&mut br).await?, Message::Hello { device_id, .. } if device_id == a_id)
+        matches!(read_msg(&mut br).await?, Message::HelloAck { device_id, .. } if device_id == a_id)
     );
     assert!(
-        matches!(read_msg(&mut ar).await?, Message::Hello { device_id, .. } if device_id == b_id)
+        matches!(read_msg(&mut ar).await?, Message::HelloAck { device_id, .. } if device_id == b_id)
     );
+    assert_eq!(received_a_key, a_key.verifying_key().to_bytes());
+    assert_eq!(received_b_key, b_key.verifying_key().to_bytes());
     write_msg(
         &mut aw,
         &Message::Chat {
@@ -249,6 +364,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut hasher = Sha256::new();
         let mut received = 0u64;
         let mut saw_chat_during_transfer = false;
+        let mut saw_file_end = false;
         loop {
             match read_msg(&mut br).await? {
                 Message::Chat { text, .. } if text == "hello-from-a-during-transfer" => {
@@ -262,7 +378,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     hasher.update(&data);
                     received += data.len() as u64;
                 }
-                Message::FileEnd { .. } => break,
+                Message::FileEnd { .. } => saw_file_end = true,
+                Message::TransferComplete { .. } => {
+                    if !saw_file_end {
+                        return Err("completion overtook file end".to_string());
+                    }
+                    break;
+                }
                 _ => {}
             }
         }
@@ -332,7 +454,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .await
                 .map_err(|error| error.to_string())?;
             let b_seen_result = joined_b_chat.map_err(|error| error.to_string())?;
-            let b_seen = b_seen_result.map_err(|error| error)?;
+            let b_seen = b_seen_result?;
             assert!(b_seen);
             sent_during_transfer_chat = true;
         }
@@ -342,6 +464,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &Message::FileEnd {
             transfer_id: transfer,
             file_id: file.id,
+        },
+    )
+    .await?;
+    write_msg(
+        &mut aw,
+        &Message::TransferComplete {
+            id: transfer,
+            name: file.name.clone(),
+            size: file.size,
+            transferred: file.size,
         },
     )
     .await?;

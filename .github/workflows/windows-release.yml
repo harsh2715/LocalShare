@@ -45,25 +45,29 @@ jobs:
       - name: Check Rust targets
         shell: pwsh
         working-directory: src-tauri
-        run: cargo check --all-targets
+        run: cargo check --locked --all-targets
+
+      - name: Check Rust formatting and lints
+        shell: pwsh
+        working-directory: src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Run Rust tests
         shell: pwsh
         working-directory: src-tauri
-        run: cargo test --all-targets
+        run: cargo test --locked --all-targets
 
       - name: Run Windows two-node transport harness
         shell: pwsh
         working-directory: src-tauri
         env:
           LOCALSHARE_TEST_SIZE_MB: 100
-        run: cargo run --features two-node --bin two_node
+        run: cargo run --locked --features two-node --bin two_node
 
       - name: Build production Tauri NSIS bundle
         shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: .\scripts\build-windows.ps1 -SkipInstall -SkipFrontend -SkipRustChecks
 
       - name: Verify installer and calculate SHA-256

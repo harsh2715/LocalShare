@@ -1,13 +1,13 @@
 # Current Implementation Audit
 
-Audit date: 2026-08-14. This reflects source inspection and the verification commands recorded in `artifacts/test-results/`.
+Audit date: 2026-09-11. This reflects source inspection and the verification commands run during the release hardening pass.
 
 Windows-specific build and host findings are recorded separately in `docs/WINDOWS-BUILD-AUDIT.md` and `docs/WINDOWS-VM-BUILD-REPORT.md`. The current Mac has no Windows VM or Windows toolchain, so Windows runtime/package claims remain blocked or unverified.
 
 ## Implemented and verified in source
 
 - React/Vite UI: `src/main.tsx`, `src/styles.css`; `npm run build` PASS.
-- Tauri shell: `src-tauri/tauri.conf.json`, `src-tauri/src/main.rs`; `mainBinaryName: localshare` is explicit, and `scripts/build-macos.sh` removes the test-only `two_node` from the generated app payload. The packaged app now contains only `Contents/MacOS/localshare`.
+- Tauri shell: `src-tauri/tauri.conf.json`, `src-tauri/src/lib.rs`, and the thin desktop `src-tauri/src/main.rs`; `mainBinaryName: localshare` is explicit, and `scripts/build-macos.sh` removes the test-only `two_node` from the generated app payload.
 - Local SQLite schema: `src-tauri/src/storage.rs`; app database opened at platform local-data `LocalShare/localshare.sqlite`.
 - Persistent UUID: `src-tauri/src/identity.rs`; fingerprint is a SHA-256-derived UUID value, not a public-key identity.
 - Framed protocol and validation: `src-tauri/src/protocol.rs`; unit tests now cover Unicode, traversal, Windows/absolute names, bad manifest, and version.
@@ -24,10 +24,10 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 
 ## Partial or not implemented
 
-- Trust is partially authenticated at the application identity layer: first-seen fingerprints require approval, trusted fingerprints persist in SQLite, and changed fingerprints are rejected. The underlying self-signed certificate key is still process-generated rather than persisted in native secure storage.
+- Trust is authenticated at the application identity layer: signed Ed25519 handshakes with fresh nonces are required, first-seen fingerprints require approval, trusted fingerprints persist in SQLite, and changed fingerprints are rejected. The identity key is persisted in native secure storage with a protected fallback.
 - Reconnect is bounded in source: trusted lower-UUID peers retry up to five times with capped exponential delays; Wi-Fi/LAN reconnect behavior is not physically tested.
 - Resume is not implemented.
-- Native OS notifications, certificate-key persistence, and resume remain incomplete. The Settings notification preference is persisted for the current in-app notice path. Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, folder transfer, updater check, trust prompt, and incoming approval UI paths are source-wired and packaged-navigation verified where noted.
+- Native OS notifications are wired through the Tauri notification plugin and remain best-effort when permission is denied. Resume remains incomplete. Messages, Transfer History, Diagnostics, Settings, drag/drop, save-location, folder transfer, updater check, trust prompt, and incoming approval UI paths are source-wired.
 - Port fallback is now probed in `main`, but mDNS/manual-connect behavior under an occupied port is not yet tested.
 
 ## Actual test evidence
@@ -38,7 +38,7 @@ Windows-specific build and host findings are recorded separately in `docs/WINDOW
 - mDNS advertisement: PASS on this Mac — `dns-sd -B _localshare._tcp local.` observed the LocalShare UUID service; physical peer discovery remains unverified.
 - `cargo check`: PASS after AWS-LC startup fix and control/data queue refactor.
 - `cargo test --all-targets`: PASS, 6 protocol tests in the library target and 9 tests in the production binary target.
-- `cargo run --features two-node --bin two_node`: PASS for real TLS chat A→B/B→A, chat A↔B during an active stream, 100 MiB and 1 GiB loopback streaming, and SHA-256 equality; evidence: `artifacts/test-results/two-node-large-files.txt`.
+- `cargo run --features two-node --bin two_node`: PASS for signed TLS chat A→B/B→A, chat during an active stream, 1 MiB/10 MiB/100 MiB loopback streaming, and SHA-256 equality.
 - `npm run tauri build` with normal environment: FAIL because Homebrew Rust’s `rust-objcopy` symlink targets a missing LLVM path.
 - `scripts/build-macos.sh`: PASS — it supplies the Homebrew LLVM/Rust target PATH, builds the app, removes the test-only executable from the app payload, and creates a plain hdiutil DMG suitable for headless/offline sessions.
 - Packaged runtime: PASS — native window, SQLite, listener, mDNS sockets, real diagnostics, and React pages verified.
