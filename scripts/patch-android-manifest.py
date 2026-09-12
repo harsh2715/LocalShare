@@ -26,3 +26,54 @@ if missing:
         raise SystemExit("Android manifest has no INTERNET permission anchor")
     text = text.replace(anchor, anchor + "".join(missing), 1)
     manifest.write_text(text, encoding="utf-8")
+
+# Android filters Wi-Fi multicast traffic unless an app explicitly holds a
+# MulticastLock. LocalShare uses mDNS for LAN discovery, so install the lock
+# in the generated activity before the Rust service starts.
+activity_files = list(
+    (manifest.parent / "java").rglob("MainActivity.kt")
+)
+if len(activity_files) != 1:
+    raise SystemExit(
+        f"Expected exactly one generated MainActivity.kt, found {len(activity_files)}"
+    )
+
+activity = activity_files[0]
+activity_text = activity.read_text(encoding="utf-8")
+if "LocalShareMulticastLock" not in activity_text:
+    activity_text = activity_text.replace(
+        "import android.os.Bundle\n",
+        "import android.content.Context\n"
+        "import android.net.wifi.WifiManager\n"
+        "import android.os.Bundle\n",
+        1,
+    )
+    activity_text = activity_text.replace(
+        "class MainActivity : TauriActivity() {\n",
+        "class MainActivity : TauriActivity() {\n"
+        "  private var localShareMulticastLock: WifiManager.MulticastLock? = null\n\n",
+        1,
+    )
+    activity_text = activity_text.replace(
+        "    enableEdgeToEdge()\n",
+        "    val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager\n"
+        "    localShareMulticastLock = wifiManager?.createMulticastLock(\"LocalShareMulticastLock\")?.apply {\n"
+        "      setReferenceCounted(false)\n"
+        "      acquire()\n"
+        "    }\n"
+        "    enableEdgeToEdge()\n",
+        1,
+    )
+    activity_text = activity_text.replace(
+        "  }\n}",
+        "  }\n\n"
+        "  override fun onDestroy() {\n"
+        "    localShareMulticastLock?.let { lock ->\n"
+        "      if (lock.isHeld) lock.release()\n"
+        "    }\n"
+        "    localShareMulticastLock = null\n"
+        "    super.onDestroy()\n"
+        "  }\n}",
+        1,
+    )
+    activity.write_text(activity_text, encoding="utf-8")
