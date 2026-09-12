@@ -48,6 +48,25 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn auto_pair_fingerprint(
+    db: &Connection,
+    peer_id: &str,
+    peer_name: &str,
+    fingerprint: &str,
+) -> Result<bool, String> {
+    match storage::trusted_fingerprint(db, peer_id) {
+        Some(expected) if expected != fingerprint => {
+            Err("Known peer identity changed; connection rejected".into())
+        }
+        Some(_) => Ok(true),
+        None if !fingerprint.trim().is_empty() => {
+            storage::trust_peer(db, peer_id, peer_name, fingerprint, now())?;
+            Ok(true)
+        }
+        None => Ok(false),
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct Peer {
     id: String,
@@ -526,15 +545,13 @@ where
         }
         _ => return Err("Invalid handshake acknowledgement".into()),
     }
+    // A successful signed handshake is the automatic pairing step.  The
+    // fingerprint is still pinned when a device has been seen before, so an
+    // unexpected identity change is rejected instead of silently replacing a
+    // trusted device.
     let trusted = {
         let db = state.db.lock().unwrap();
-        match storage::trusted_fingerprint(&db, &peer_id) {
-            Some(expected) if expected != fingerprint => {
-                return Err("Known peer identity changed; connection rejected".into());
-            }
-            Some(_) => true,
-            None => false,
-        }
+        auto_pair_fingerprint(&db, &peer_id, &peer_name, &fingerprint)?
     };
     let peer = Peer {
         id: peer_id.clone(),
@@ -556,8 +573,8 @@ where
         .lock()
         .unwrap()
         .insert(peer_id.clone(), peer.clone());
-    emit(&state.app, "peer-updated", &peer);
     if !trusted {
+        emit(&state.app, "peer-updated", &peer);
         return Ok(());
     }
     let (control_tx, mut control_rx) = mpsc::channel::<Message>(128);
@@ -575,6 +592,7 @@ where
             },
         );
     }
+    emit(&state.app, "peer-updated", &peer);
     state.reconnect_attempts.lock().unwrap().remove(&peer_id);
     let writer_task = tokio::spawn(async move {
         loop {
@@ -2095,22 +2113,24 @@ fn start_mdns(state: Arc<AppState>, port: u16) {
                         for ip in info.get_addresses() {
                             let peer_id = id.clone();
                             let address = display_socket(*ip, info.get_port());
-                            let trusted = state
-                                .db
-                                .lock()
-                                .unwrap()
-                                .query_row(
-                                    "SELECT 1 FROM trusted_peers WHERE device_id=?1 AND fingerprint=?2",
-                                    rusqlite::params![peer_id, fingerprint],
-                                    |_| Ok(true),
-                                )
-                                .unwrap_or(false);
+                            let trusted = {
+                                let db = state.db.lock().unwrap();
+                                auto_pair_fingerprint(&db, &peer_id, &name, &fingerprint)
+                                    .unwrap_or(false)
+                            };
+                            let connected = state.sessions.lock().unwrap().contains_key(&peer_id);
+                            let connecting =
+                                state.connecting.lock().unwrap().contains_key(&peer_id);
                             let peer = Peer {
                                 id: peer_id.clone(),
                                 name: name.clone(),
                                 address: address.clone(),
                                 fingerprint: fingerprint.clone(),
-                                state: if trusted {
+                                state: if connected {
+                                    "connected"
+                                } else if connecting {
+                                    "connecting"
+                                } else if trusted {
                                     "available"
                                 } else {
                                     "trust_required"
@@ -2360,6 +2380,20 @@ mod tests {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from(".localshare-test-work/unit"));
         root.join(format!("{}-{}", name, Uuid::new_v4()))
+    }
+
+    #[test]
+    fn first_contact_pairs_and_pins_fingerprint() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE trusted_peers (device_id TEXT PRIMARY KEY, name TEXT NOT NULL, fingerprint TEXT NOT NULL, trusted_at INTEGER NOT NULL);").unwrap();
+        assert!(auto_pair_fingerprint(&db, "peer-a", "Phone", "fingerprint-a").unwrap());
+        assert_eq!(
+            storage::trusted_fingerprint(&db, "peer-a").as_deref(),
+            Some("fingerprint-a")
+        );
+        assert!(auto_pair_fingerprint(&db, "peer-a", "Phone", "fingerprint-a").unwrap());
+        assert!(auto_pair_fingerprint(&db, "peer-a", "Phone", "fingerprint-b").is_err());
+        assert!(!auto_pair_fingerprint(&db, "peer-b", "Phone", "").unwrap());
     }
 
     #[test]

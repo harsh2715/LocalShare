@@ -1,6 +1,6 @@
 [package]
 name = "localshare"
-version = "0.1.9"
+version = "0.1.10"
 description = "Direct encrypted LAN file transfer and chat"
 authors = ["LocalShare"]
 edition = "2021"
