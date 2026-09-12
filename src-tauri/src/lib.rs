@@ -1685,9 +1685,11 @@ async fn connect_manual(
     ip: String,
     port: u16,
 ) -> Result<(), String> {
-    let addr: SocketAddr = format!("{}:{}", ip.trim(), port)
-        .parse()
-        .map_err(|e| format!("Invalid address: {e}"))?;
+    let host = ip.trim().trim_start_matches('[').trim_end_matches(']');
+    let parsed_ip = host
+        .parse::<IpAddr>()
+        .map_err(|e| format!("Invalid IP address: {e}"))?;
+    let addr = SocketAddr::new(parsed_ip, port);
     let stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
         .map_err(|_| "Could not connect: timeout".to_string())?
