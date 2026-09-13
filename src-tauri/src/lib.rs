@@ -17,7 +17,6 @@ use std::{
     fs,
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
-    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -25,6 +24,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+#[cfg(target_os = "android")]
+use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+use tauri_plugin_opener::OpenerExt;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -43,8 +45,50 @@ use tokio_rustls::{
 use uuid::Uuid;
 use x509_parser::prelude::parse_x509_certificate;
 
+#[cfg(target_os = "android")]
+mod android_metadata {
+    use serde::{Deserialize, Serialize};
+    use tauri::{
+        plugin::{Builder, PluginApi, PluginHandle, TauriPlugin},
+        Manager, Runtime,
+    };
+
+    pub const PLUGIN_IDENTIFIER: &str = "com.localshare.desktop";
+
+    #[derive(Clone)]
+    pub struct Handle<R: Runtime>(pub PluginHandle<R>);
+
+    pub fn init<R: Runtime>() -> TauriPlugin<R, ()> {
+        Builder::<R, ()>::new("android_metadata")
+            .setup(|app, api: PluginApi<R, ()>| {
+                let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "MetadataPlugin")?;
+                app.manage(Handle(handle));
+                Ok(())
+            })
+            .build()
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Response {
+        pub name: String,
+        #[serde(rename = "mimeType")]
+        #[allow(dead_code)]
+        pub mime_type: Option<String>,
+    }
+
+    pub async fn resolve<R: Runtime>(handle: &Handle<R>, uri: &str) -> Result<Response, String> {
+        handle
+            .0
+            .run_mobile_plugin_async("resolve", serde_json::json!({ "uri": uri }))
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const LAN_PROBE_TIMEOUT: Duration = Duration::from_millis(400);
+const LAN_PROBE_INTERVAL: Duration = Duration::from_secs(10);
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 const FRAME_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -65,6 +109,10 @@ fn auto_pair_fingerprint(
         }
         None => Ok(false),
     }
+}
+
+fn should_initiate_connection(connected: bool, connecting: bool) -> bool {
+    !connected && !connecting
 }
 
 #[derive(Clone, Serialize)]
@@ -163,6 +211,7 @@ struct AppState {
     incoming_cancellations: Mutex<HashMap<Uuid, Arc<AtomicBool>>>,
     pending_incoming: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
     pending_outgoing: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
+    pending_completion: Mutex<HashMap<Uuid, oneshot::Sender<bool>>>,
     connecting: Mutex<HashMap<String, bool>>,
     reconnect_attempts: Mutex<HashMap<String, u8>>,
     mdns: Mutex<Option<ServiceDaemon>>,
@@ -914,12 +963,11 @@ where
                     let history_size = file.file.size;
                     let history_path = file.final_path.to_string_lossy().into_owned();
                     ensure_no_symlink_components(&file.final_path)?;
-                    tokio::fs::hard_link(&file.part, &file.final_path)
+                    // A rename is atomic on the same filesystem and works in
+                    // Android app storage, where hard links are unavailable.
+                    tokio::fs::rename(&file.part, &file.final_path)
                         .await
                         .map_err(|e| format!("Unable to commit received file safely: {e}"))?;
-                    tokio::fs::remove_file(&file.part)
-                        .await
-                        .map_err(|e| e.to_string())?;
                     orphan_part = None;
                     state
                         .incoming_cancellations
@@ -980,6 +1028,9 @@ where
                 state.incoming_cancellations.lock().unwrap().remove(&id);
                 accepted_transfers.remove(&id);
                 if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+                    let _ = waiter.send(false);
+                }
+                if let Some(waiter) = state.pending_completion.lock().unwrap().remove(&id) {
                     let _ = waiter.send(false);
                 }
                 emit(
@@ -1056,6 +1107,9 @@ where
                         },
                     );
                     state.transfer_peers.lock().unwrap().remove(&id);
+                    if let Some(waiter) = state.pending_completion.lock().unwrap().remove(&id) {
+                        let _ = waiter.send(true);
+                    }
                 }
             }
             Ok(_) => {}
@@ -1101,6 +1155,9 @@ where
         if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
             let _ = waiter.send(false);
         }
+        if let Some(waiter) = state.pending_completion.lock().unwrap().remove(&id) {
+            let _ = waiter.send(false);
+        }
     }
     state.sessions.lock().unwrap().remove(&peer_id);
     state.connecting.lock().unwrap().remove(&peer_id);
@@ -1115,10 +1172,8 @@ where
         .get(&peer_id)
         .filter(|peer| peer.trusted)
         .and_then(|peer| peer.address.parse::<SocketAddr>().ok());
-    if state.identity.device_id.to_string() < peer_id {
-        if let Some(address) = reconnect_address {
-            schedule_reconnect(state.clone(), peer_id.clone(), address);
-        }
+    if let Some(address) = reconnect_address {
+        schedule_reconnect(state.clone(), peer_id.clone(), address);
     }
     writer_task.abort();
     result
@@ -1305,6 +1360,117 @@ fn expanded_transfer_inputs(paths: &[String]) -> Result<ExpandedTransfer, String
     directories.sort();
     directories.dedup();
     Ok((expanded, directories))
+}
+
+#[cfg(target_os = "android")]
+fn safe_android_file_name(value: &str) -> Option<String> {
+    let candidate = value.trim();
+    if candidate.is_empty()
+        || candidate.len() > 180
+        || candidate == "."
+        || candidate == ".."
+        || candidate.contains('/')
+        || candidate.contains('\\')
+        || candidate.chars().any(|character| character.is_control())
+    {
+        return None;
+    }
+    Some(candidate.to_string())
+}
+
+#[cfg(target_os = "android")]
+fn android_uri_file_name(uri: &str, transfer_id: Uuid, provided_name: Option<&str>) -> String {
+    if let Some(name) = provided_name.and_then(safe_android_file_name) {
+        return name;
+    }
+    let candidate = uri
+        .split('?')
+        .next()
+        .and_then(|value| value.rsplit('/').next())
+        .unwrap_or_default()
+        .replace("%20", " ")
+        .replace("%2E", ".")
+        .replace("%2e", ".");
+    safe_android_file_name(&candidate)
+        .filter(|name| name.contains('.'))
+        .unwrap_or_else(|| format!("LocalShare-{transfer_id}.bin"))
+}
+
+#[cfg(target_os = "android")]
+fn prepare_android_transfer_inputs(
+    app: &AppHandle,
+    paths: &[String],
+    transfer_id: Uuid,
+    file_names: Option<&[String]>,
+) -> Result<(Vec<String>, Vec<PathBuf>), String> {
+    let mut normalized = Vec::with_capacity(paths.len());
+    let mut staged = Vec::new();
+    let staging_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?
+        .join("outgoing");
+    fs::create_dir_all(&staging_dir).map_err(|error| error.to_string())?;
+
+    for (index, path) in paths.iter().enumerate() {
+        if !path.starts_with("content://") {
+            normalized.push(path.clone());
+            continue;
+        }
+        let source = path
+            .parse::<FilePath>()
+            .map_err(|error| format!("Unable to read selected Android file: {error}"))?;
+        let mut open_options = OpenOptions::new();
+        open_options.read(true);
+        let mut input = match app.fs().open(source, open_options) {
+            Ok(file) => file,
+            Err(error) => {
+                for staged_path in &staged {
+                    let _ = fs::remove_file(staged_path);
+                }
+                return Err(format!("Unable to read selected Android file: {error}"));
+            }
+        };
+        let name = android_uri_file_name(
+            path,
+            transfer_id,
+            file_names.and_then(|names| names.get(index).map(String::as_str)),
+        );
+        let destination = staging_dir.join(format!("{transfer_id}-{name}"));
+        let mut output = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+        {
+            Ok(file) => file,
+            Err(error) => {
+                for staged_path in &staged {
+                    let _ = fs::remove_file(staged_path);
+                }
+                return Err(format!("Unable to stage selected Android file: {error}"));
+            }
+        };
+        if let Err(error) = std::io::copy(&mut input, &mut output) {
+            let _ = fs::remove_file(&destination);
+            for staged_path in &staged {
+                let _ = fs::remove_file(staged_path);
+            }
+            return Err(format!("Unable to read selected Android file: {error}"));
+        }
+        normalized.push(destination.to_string_lossy().into_owned());
+        staged.push(destination);
+    }
+    Ok((normalized, staged))
+}
+
+#[cfg(not(target_os = "android"))]
+fn prepare_android_transfer_inputs(
+    _app: &AppHandle,
+    paths: &[String],
+    _transfer_id: Uuid,
+    _file_names: Option<&[String]>,
+) -> Result<(Vec<String>, Vec<PathBuf>), String> {
+    Ok((paths.to_vec(), Vec::new()))
 }
 
 fn download_dir(state: &AppState) -> Result<PathBuf, String> {
@@ -1521,68 +1687,42 @@ fn save_settings(
     )?;
     Ok(())
 }
+fn open_with_default_app(app: &AppHandle, path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        // The Android opener bridge accepts the URL-shaped argument object;
+        // open_path currently serializes a bare string and fails to deserialize.
+        return app
+            .opener()
+            .open_url(path.to_string_lossy().as_ref(), None::<&str>)
+            .map_err(|error| error.to_string());
+    }
+    #[cfg(not(target_os = "android"))]
+    app.opener()
+        .open_path(path.to_string_lossy().as_ref(), None::<&str>)
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
-fn open_location(path: String) -> Result<(), String> {
+fn open_location(app: AppHandle, path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
     if !target.exists() {
         return Err("Location does not exist".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    open_with_default_app(&app, &target)
 }
 
 #[tauri::command]
-fn open_file(path: String) -> Result<(), String> {
+fn open_file(app: AppHandle, path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
     if !target.is_file() {
         return Err("File does not exist".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer.exe")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(&target)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    open_with_default_app(&app, &target)
 }
 
 #[tauri::command]
-fn open_folder(path: String) -> Result<(), String> {
+fn open_folder(app: AppHandle, path: String) -> Result<(), String> {
     let target = PathBuf::from(path);
     let folder = if target.is_dir() {
         target
@@ -1595,28 +1735,7 @@ fn open_folder(path: String) -> Result<(), String> {
     if !folder.exists() {
         return Err("Folder does not exist".into());
     }
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        Command::new("xdg-open")
-            .arg(&folder)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
+    open_with_default_app(&app, &folder)
 }
 #[tauri::command]
 fn accept_transfer(state: State<'_, Arc<AppState>>, transfer_id: String) -> Result<(), String> {
@@ -1797,11 +1916,22 @@ async fn send_chat(
         .map_err(|e| e.to_string())?;
     Ok(id.to_string())
 }
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn resolve_android_file(
+    metadata: State<'_, android_metadata::Handle<tauri::Wry>>,
+    uri: String,
+) -> Result<android_metadata::Response, String> {
+    android_metadata::resolve(&metadata, &uri).await
+}
+
 #[tauri::command]
 async fn send_files(
     state: State<'_, Arc<AppState>>,
     peer_id: String,
     paths: Vec<String>,
+    file_names: Option<Vec<String>>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4();
     let (control_tx, data_tx) = state
@@ -1811,7 +1941,17 @@ async fn send_files(
         .get(&peer_id)
         .map(|s| (s.control_tx.clone(), s.data_tx.clone()))
         .ok_or("Peer is not connected")?;
-    let (expanded, directories) = expanded_transfer_inputs(&paths)?;
+    let (normalized_paths, staged_paths) =
+        prepare_android_transfer_inputs(&state.app, &paths, id, file_names.as_deref())?;
+    let (expanded, directories) = match expanded_transfer_inputs(&normalized_paths) {
+        Ok(value) => value,
+        Err(error) => {
+            for path in staged_paths {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error);
+        }
+    };
     let files = expanded
         .iter()
         .map(|(_, file)| file.clone())
@@ -1833,8 +1973,15 @@ async fn send_files(
         .insert(id, peer_id.clone());
     let (accept_tx, accept_rx) = oneshot::channel();
     state.pending_outgoing.lock().unwrap().insert(id, accept_tx);
+    let (completion_tx, completion_rx) = oneshot::channel();
+    state
+        .pending_completion
+        .lock()
+        .unwrap()
+        .insert(id, completion_tx);
     let app = state.app.clone();
     let history_state = state.inner().clone();
+    let staged_for_task = staged_paths.clone();
     let peer_for_task = peer_id.clone();
     let display_name = if files.len() == 1 {
         files[0]
@@ -1923,9 +2070,16 @@ async fn send_files(
                 );
             }
             data_tx.send(Message::TransferComplete { id, name: display_name.clone(), size: total, transferred: total }).await.map_err(|_| "Peer connection closed".to_string())?;
-            Ok(())
+            match timeout(SESSION_IDLE_TIMEOUT, completion_rx).await {
+                Ok(Ok(true)) => Ok(()),
+                _ => Err("Receiver did not confirm transfer completion".into()),
+            }
         }.await;
+        for path in staged_for_task {
+            let _ = fs::remove_file(path);
+        }
         history_state.pending_outgoing.lock().unwrap().remove(&id);
+        history_state.pending_completion.lock().unwrap().remove(&id);
         history_state.transfers.lock().unwrap().remove(&id);
         if let Err(message) = result {
             history_state.transfer_peers.lock().unwrap().remove(&id);
@@ -1969,6 +2123,9 @@ fn cancel_transfer(state: State<'_, Arc<AppState>>, transfer_id: String) -> Resu
     if let Some(flag) = state.transfers.lock().unwrap().get(&id) {
         flag.store(true, Ordering::Relaxed);
         if let Some(waiter) = state.pending_outgoing.lock().unwrap().remove(&id) {
+            let _ = waiter.send(false);
+        }
+        if let Some(waiter) = state.pending_completion.lock().unwrap().remove(&id) {
             let _ = waiter.send(false);
         }
         return Ok(());
@@ -2027,6 +2184,57 @@ fn private_addresses() -> Vec<String> {
     } else {
         preferred
     }
+}
+
+fn lan_probe_targets(addresses: &[String], port: u16) -> Vec<SocketAddr> {
+    let mut targets = HashSet::new();
+    for address in addresses {
+        let Ok(IpAddr::V4(ip)) = address.parse::<IpAddr>() else {
+            continue;
+        };
+        let octets = ip.octets();
+        for host in 1..=254u8 {
+            let candidate = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], host);
+            if candidate != ip {
+                targets.insert(SocketAddr::new(IpAddr::V4(candidate), port));
+            }
+        }
+    }
+    let mut targets = targets.into_iter().collect::<Vec<_>>();
+    targets.sort_unstable();
+    targets
+}
+
+fn start_lan_probe(state: Arc<AppState>, port: u16) {
+    std::thread::spawn(move || {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        runtime.block_on(async move {
+            loop {
+                let targets = lan_probe_targets(&private_addresses(), port);
+                let mut probes = Vec::with_capacity(targets.len());
+                for address in targets {
+                    let probe_state = state.clone();
+                    probes.push(tokio::spawn(async move {
+                        let Ok(Ok(stream)) =
+                            timeout(LAN_PROBE_TIMEOUT, TcpStream::connect(address)).await
+                        else {
+                            return;
+                        };
+                        let _ = handle_connection(probe_state, stream, true, address).await;
+                    }));
+                }
+                for probe in probes {
+                    let _ = probe.await;
+                }
+                sleep(LAN_PROBE_INTERVAL).await;
+            }
+        });
+    });
 }
 
 fn display_socket(ip: IpAddr, port: u16) -> String {
@@ -2145,16 +2353,32 @@ fn start_mdns(state: Arc<AppState>, port: u16) {
                                 .unwrap()
                                 .insert(peer_id.clone(), peer.clone());
                             emit(&state.app, "peer-updated", peer.clone());
-                            let should_connect = trusted
-                                && state.identity.device_id.to_string() < peer_id
-                                && !state.sessions.lock().unwrap().contains_key(&peer_id)
-                                && state
-                                    .connecting
-                                    .lock()
-                                    .unwrap()
-                                    .insert(peer_id.clone(), true)
-                                    .is_none();
+                            // mDNS discovery is only a locator.  The signed
+                            // TLS handshake below performs identity validation
+                            // and pins the fingerprint.  Requiring a trusted
+                            // mDNS TXT record here caused peers to remain at
+                            // "Discovered" forever when that record was empty
+                            // or stale after an app reinstall.
+                            let should_connect = should_initiate_connection(
+                                state.sessions.lock().unwrap().contains_key(&peer_id),
+                                state.connecting.lock().unwrap().contains_key(&peer_id),
+                            ) && state
+                                .connecting
+                                .lock()
+                                .unwrap()
+                                .insert(peer_id.clone(), true)
+                                .is_none();
                             if should_connect {
+                                let updated = {
+                                    let mut peers = state.peers.lock().unwrap();
+                                    peers.get_mut(&peer_id).map(|peer| {
+                                        peer.state = "connecting".into();
+                                        peer.clone()
+                                    })
+                                };
+                                if let Some(updated) = updated {
+                                    emit(&state.app, "peer-updated", updated);
+                                }
                                 let connect_state = state.clone();
                                 let connect_id = peer_id.clone();
                                 std::thread::spawn(move || {
@@ -2224,149 +2448,176 @@ pub fn run() {
         .try_init();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_metadata::init());
     #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     let builder = builder.plugin(tauri_plugin_process::init());
-    builder
-        .setup(|app| {
-            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
-            app.handle()
-                .plugin(tauri_plugin_updater::Builder::new().build())?;
-            let data =
-                application_data_dir(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
-            let default_download_dir = default_download_dir(app.handle(), &data)
-                .map_err(Box::<dyn std::error::Error>::from)?;
-            let db = storage::open(&data, &default_download_dir)
-                .map_err(Box::<dyn std::error::Error>::from)?;
-            let name = storage::setting(&db, "device_name");
-            let identity = identity::load_or_create(&data, name)
-                .map_err(Box::<dyn std::error::Error>::from)?;
-            let updater_enabled = cfg!(any(
-                target_os = "macos",
-                target_os = "windows",
-                target_os = "linux"
-            )) && storage::setting(&db, "check_for_updates")
-                .map(|value| value != "false")
-                .unwrap_or(true);
-            let receive_directory = default_download_dir.to_string_lossy().into_owned();
-            let (tls_server, _) =
-                tls_configs(&identity).map_err(Box::<dyn std::error::Error>::from)?;
-            let app_handle = app.handle().clone();
-            let probe = std::net::TcpListener::bind(("0.0.0.0", 32123))
-                .or_else(|_| std::net::TcpListener::bind(("0.0.0.0", 0)))
-                .map_err(Box::<dyn std::error::Error>::from)?;
-            let port = probe.local_addr()?.port();
-            probe.set_nonblocking(true)?;
-            let ipv6_probe = std::net::TcpListener::bind(("::", port))
-                .ok()
-                .and_then(|listener| listener.set_nonblocking(true).ok().map(|()| listener));
-            let state = Arc::new(AppState {
-                identity: identity.clone(),
-                device_name: Mutex::new(identity.device_name.clone()),
-                db: Mutex::new(db),
-                peers: Mutex::new(HashMap::new()),
-                sessions: Mutex::new(HashMap::new()),
-                transfers: Mutex::new(HashMap::new()),
-                transfer_peers: Mutex::new(HashMap::new()),
-                incoming_cancellations: Mutex::new(HashMap::new()),
-                pending_incoming: Mutex::new(HashMap::new()),
-                pending_outgoing: Mutex::new(HashMap::new()),
-                connecting: Mutex::new(HashMap::new()),
-                reconnect_attempts: Mutex::new(HashMap::new()),
-                mdns: Mutex::new(None),
-                local: Mutex::new(LocalInfo {
-                    version: env!("CARGO_PKG_VERSION").into(),
-                    device_id: identity.device_id.to_string(),
-                    device_name: identity.device_name.clone(),
-                    platform: std::env::consts::OS.into(),
-                    architecture: std::env::consts::ARCH.into(),
-                    fingerprint: identity.fingerprint.clone(),
-                    port,
-                    addresses: private_addresses(),
-                    mdns: "advertising + browsing".into(),
-                    mdns_advertise: "starting".into(),
-                    mdns_browse: "starting".into(),
-                    listener_state: "starting".into(),
-                    tls_state: "configured".into(),
-                    database_state: "healthy".into(),
-                    receive_directory,
-                    updater: if updater_enabled {
-                        "enabled · Internet only".into()
-                    } else {
-                        "disabled".into()
-                    },
-                    transport: "TLS 1.3 / direct LAN TCP".into(),
-                }),
-                default_download_dir,
-                tls_server,
-                app: app_handle.clone(),
-            });
-            app.manage(state.clone());
-            if let Ok(directory) = download_dir(&state) {
-                if let Err(error) = cleanup_stale_partials(&directory) {
-                    tracing::warn!(error = %error, "unable to clean stale partial transfers");
-                }
+    let builder = builder.setup(|app| {
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        app.handle()
+            .plugin(tauri_plugin_updater::Builder::new().build())?;
+        let data =
+            application_data_dir(app.handle()).map_err(Box::<dyn std::error::Error>::from)?;
+        let default_download_dir = default_download_dir(app.handle(), &data)
+            .map_err(Box::<dyn std::error::Error>::from)?;
+        let db = storage::open(&data, &default_download_dir)
+            .map_err(Box::<dyn std::error::Error>::from)?;
+        let name = storage::setting(&db, "device_name");
+        let identity =
+            identity::load_or_create(&data, name).map_err(Box::<dyn std::error::Error>::from)?;
+        let updater_enabled = cfg!(any(
+            target_os = "macos",
+            target_os = "windows",
+            target_os = "linux"
+        )) && storage::setting(&db, "check_for_updates")
+            .map(|value| value != "false")
+            .unwrap_or(true);
+        let receive_directory = default_download_dir.to_string_lossy().into_owned();
+        let (tls_server, _) = tls_configs(&identity).map_err(Box::<dyn std::error::Error>::from)?;
+        let app_handle = app.handle().clone();
+        let probe = std::net::TcpListener::bind(("0.0.0.0", 32123))
+            .or_else(|_| std::net::TcpListener::bind(("0.0.0.0", 0)))
+            .map_err(Box::<dyn std::error::Error>::from)?;
+        let port = probe.local_addr()?.port();
+        probe.set_nonblocking(true)?;
+        let ipv6_probe = std::net::TcpListener::bind(("::", port))
+            .ok()
+            .and_then(|listener| listener.set_nonblocking(true).ok().map(|()| listener));
+        let state = Arc::new(AppState {
+            identity: identity.clone(),
+            device_name: Mutex::new(identity.device_name.clone()),
+            db: Mutex::new(db),
+            peers: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
+            transfers: Mutex::new(HashMap::new()),
+            transfer_peers: Mutex::new(HashMap::new()),
+            incoming_cancellations: Mutex::new(HashMap::new()),
+            pending_incoming: Mutex::new(HashMap::new()),
+            pending_outgoing: Mutex::new(HashMap::new()),
+            pending_completion: Mutex::new(HashMap::new()),
+            connecting: Mutex::new(HashMap::new()),
+            reconnect_attempts: Mutex::new(HashMap::new()),
+            mdns: Mutex::new(None),
+            local: Mutex::new(LocalInfo {
+                version: env!("CARGO_PKG_VERSION").into(),
+                device_id: identity.device_id.to_string(),
+                device_name: identity.device_name.clone(),
+                platform: std::env::consts::OS.into(),
+                architecture: std::env::consts::ARCH.into(),
+                fingerprint: identity.fingerprint.clone(),
+                port,
+                addresses: private_addresses(),
+                mdns: "advertising + browsing".into(),
+                mdns_advertise: "starting".into(),
+                mdns_browse: "starting".into(),
+                listener_state: "starting".into(),
+                tls_state: "configured".into(),
+                database_state: "healthy".into(),
+                receive_directory,
+                updater: if updater_enabled {
+                    "enabled · Internet only".into()
+                } else {
+                    "disabled".into()
+                },
+                transport: "TLS 1.3 / direct LAN TCP".into(),
+            }),
+            default_download_dir,
+            tls_server,
+            app: app_handle.clone(),
+        });
+        app.manage(state.clone());
+        if let Ok(directory) = download_dir(&state) {
+            if let Err(error) = cleanup_stale_partials(&directory) {
+                tracing::warn!(error = %error, "unable to clean stale partial transfers");
             }
-            start_mdns(state.clone(), port);
-            let listener_state = state.clone();
-            tauri::async_runtime::spawn(async move {
-                let listener = match TcpListener::from_std(probe) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        update_local_status(&listener_state, |local| {
-                            local.listener_state = "failed".into()
-                        });
-                        return;
-                    }
-                };
-                update_local_status(&listener_state, |local| {
-                    local.listener_state = "active".into()
+        }
+        start_mdns(state.clone(), port);
+        start_lan_probe(state.clone(), port);
+        let listener_state = state.clone();
+        tauri::async_runtime::spawn(async move {
+            let listener = match TcpListener::from_std(probe) {
+                Ok(v) => v,
+                Err(_) => {
+                    update_local_status(&listener_state, |local| {
+                        local.listener_state = "failed".into()
+                    });
+                    return;
+                }
+            };
+            update_local_status(&listener_state, |local| {
+                local.listener_state = "active".into()
+            });
+            while let Ok((stream, addr)) = listener.accept().await {
+                let state = listener_state.clone();
+                tokio::spawn(async move {
+                    let _ = handle_connection(state, stream, false, addr).await;
                 });
+            }
+            update_local_status(&listener_state, |local| {
+                local.listener_state = "stopped".into()
+            });
+        });
+        if let Some(ipv6_probe) = ipv6_probe {
+            let state = state.clone();
+            tauri::async_runtime::spawn(async move {
+                let Ok(listener) = TcpListener::from_std(ipv6_probe) else {
+                    return;
+                };
                 while let Ok((stream, addr)) = listener.accept().await {
-                    let state = listener_state.clone();
+                    let state = state.clone();
                     tokio::spawn(async move {
                         let _ = handle_connection(state, stream, false, addr).await;
                     });
                 }
-                update_local_status(&listener_state, |local| {
-                    local.listener_state = "stopped".into()
-                });
             });
-            if let Some(ipv6_probe) = ipv6_probe {
-                let state = state.clone();
-                tauri::async_runtime::spawn(async move {
-                    let Ok(listener) = TcpListener::from_std(ipv6_probe) else {
-                        return;
-                    };
-                    while let Ok((stream, addr)) = listener.accept().await {
-                        let state = state.clone();
-                        tokio::spawn(async move {
-                            let _ = handle_connection(state, stream, false, addr).await;
-                        });
-                    }
-                });
-            }
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            local_info,
-            list_peers,
-            chat_history,
-            transfer_history,
-            clear_transfer_history,
-            settings,
-            save_settings,
-            open_location,
-            open_file,
-            open_folder,
-            accept_transfer,
-            reject_transfer,
-            trust_peer,
-            connect_manual,
-            send_chat,
-            send_files,
-            cancel_transfer
-        ])
+        }
+        Ok(())
+    });
+    #[cfg(target_os = "android")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        local_info,
+        list_peers,
+        chat_history,
+        transfer_history,
+        clear_transfer_history,
+        settings,
+        save_settings,
+        open_location,
+        open_file,
+        open_folder,
+        accept_transfer,
+        reject_transfer,
+        trust_peer,
+        connect_manual,
+        send_chat,
+        send_files,
+        cancel_transfer,
+        resolve_android_file
+    ]);
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        local_info,
+        list_peers,
+        chat_history,
+        transfer_history,
+        clear_transfer_history,
+        settings,
+        save_settings,
+        open_location,
+        open_file,
+        open_folder,
+        accept_transfer,
+        reject_transfer,
+        trust_peer,
+        connect_manual,
+        send_chat,
+        send_files,
+        cancel_transfer
+    ]);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running LocalShare");
 }
@@ -2394,6 +2645,14 @@ mod tests {
         assert!(auto_pair_fingerprint(&db, "peer-a", "Phone", "fingerprint-a").unwrap());
         assert!(auto_pair_fingerprint(&db, "peer-a", "Phone", "fingerprint-b").is_err());
         assert!(!auto_pair_fingerprint(&db, "peer-b", "Phone", "").unwrap());
+    }
+
+    #[test]
+    fn discovered_peer_can_start_automatic_pairing_without_prior_trust() {
+        assert!(should_initiate_connection(false, false));
+        assert!(should_initiate_connection(false, false));
+        assert!(!should_initiate_connection(true, false));
+        assert!(!should_initiate_connection(false, true));
     }
 
     #[test]

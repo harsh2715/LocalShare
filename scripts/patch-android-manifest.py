@@ -27,6 +27,16 @@ if missing:
     text = text.replace(anchor, anchor + "".join(missing), 1)
     manifest.write_text(text, encoding="utf-8")
 
+# Keep the Android content-provider metadata bridge in the generated project.
+# Android media/document URIs commonly contain only an opaque numeric ID, so
+# the original filename cannot be recovered from the URI in Rust alone.
+metadata_source = Path("src-tauri/android/MetadataPlugin.kt")
+metadata_target = manifest.parent / "java/com/localshare/desktop/MetadataPlugin.kt"
+if not metadata_source.is_file():
+    raise SystemExit(f"Android metadata bridge not found: {metadata_source}")
+metadata_target.parent.mkdir(parents=True, exist_ok=True)
+metadata_target.write_text(metadata_source.read_text(encoding="utf-8"), encoding="utf-8")
+
 # Android filters Wi-Fi multicast traffic unless an app explicitly holds a
 # MulticastLock. LocalShare uses mDNS for LAN discovery, so install the lock
 # in the generated activity before the Rust service starts.

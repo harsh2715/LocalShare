@@ -4,5 +4,5 @@
   "description": "LocalShare mobile permissions",
   "platforms": ["android"],
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "notification:default"]
+  "permissions": ["core:default", "dialog:default", "fs:default", "notification:default", "opener:default"]
 }

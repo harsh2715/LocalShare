@@ -4,5 +4,5 @@
   "description": "Default LocalShare permissions",
   "platforms": ["macOS", "windows", "linux"],
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "notification:default", "updater:default", "process:default"]
+  "permissions": ["core:default", "dialog:default", "fs:default", "notification:default", "opener:default", "updater:default", "process:default"]
 }
